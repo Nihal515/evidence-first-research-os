@@ -93,6 +93,10 @@ export async function restoreSession(): Promise<boolean> {
 
 function message(err: any, fallback: string): string {
   const m = err?.message || err?.error?.message;
+  const code = String(err?.code || err?.error?.code || "");
+  if (/origin/i.test(code) || /invalid origin|untrusted origin/i.test(String(m))) {
+    return "The sign-in service does not trust this website yet. Add this site's address in Neon → Auth → Configuration → Domains, then try again.";
+  }
   if (typeof m === "string" && m && !/fetch|network/i.test(m)) return m;
   return fallback;
 }
