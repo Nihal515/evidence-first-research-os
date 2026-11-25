@@ -230,7 +230,7 @@ async function run(mobile) {
 (async () => {
   const which = process.env.ONLY ? [process.env.ONLY === 'phone'] : [false, true];
   for (const mobile of which) {
-    try { await run(mobile); } catch (e) { if (CURRENT) await CURRENT.screenshot({ path: `${OUT}/shots/crash-${mobile ? 'phone' : 'desktop'}.png` }).catch(() => {}); results.push(`FAIL ${mobile ? 'phone' : 'desktop'} crashed: ` + e.message.split('\n')[0]); }
+    try { await run(mobile); } catch (e) { if (CURRENT) await CURRENT.screenshot({ path: `${OUT}/shots/crash-${mobile ? 'phone' : 'desktop'}.png` }).catch(() => {}); const m = `FAIL ${mobile ? 'phone' : 'desktop'} crashed: ` + e.message.split('\n')[0]; results.push(m); console.log(m); }
   }
   console.log(`\n${results.filter((r) => r.startsWith('PASS')).length} passed, ${results.filter((r) => r.startsWith('FAIL')).length} failed`);
 })();
