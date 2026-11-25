@@ -58,6 +58,10 @@ npm test                                       # APA 7 formatting and AI-use sta
 | `DATABASE_URL` | yes | Set automatically when the Neon database is connected |
 | `CROSSREF_MAILTO` | recommended | Contact email for Crossref's polite pool |
 | `OPENALEX_API_KEY` | recommended | Free key from openalex.org/settings/api |
-| `LLM_PROVIDER`, `LLM_API_KEY` | stage 1b | AI agents (not used yet) |
+| `LLM_PROVIDER` | stage 1b | `groq` or `gemini` (small letters) |
+| `LLM_API_KEY` | stage 1b | Free key from console.groq.com/keys (Groq) or aistudio.google.com (Gemini) |
+| `GEMINI_API_KEY` | optional | Backup Gemini key used if the main provider fails |
 
 No secret is ever sent to the browser.
+
+To confirm the saved keys work, open `/api/health/keys`. Each key is tested with its provider and reported as `valid`, `invalid`, `not_configured`, `rate_limited` or `unavailable` — the key itself is never shown.

@@ -11,6 +11,7 @@ from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 
 from . import db
+from . import keycheck
 from . import providers
 from .labels import LABELS, NOT_FOUND, NOT_YET_VERIFIED, VERIFIED
 from .records import normalize_doi, record_from_crossref
@@ -98,6 +99,13 @@ def health():
         "openalex_key": bool(os.getenv("OPENALEX_API_KEY")),
         "llm": "connected" if os.getenv("LLM_API_KEY") else "not_connected",
     }
+
+
+@app.get("/api/health/keys")
+def health_keys():
+    """Tests each saved API key with its provider (cached for 60 s).
+    Reports only valid / invalid / not_configured / unavailable — never a key."""
+    return keycheck.check_all(providers.make_client)
 
 
 @app.get("/api/labels")
