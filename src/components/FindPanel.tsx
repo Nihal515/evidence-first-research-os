@@ -36,8 +36,8 @@ export function FindPanel({ projectId, onAdded, collectionId }: Props) {
     setAdding(doi);
     setError("");
     try {
-      await api.approve(projectId, { mode: "doi", doi }, collectionId);
-      setAdded((a) => ({ ...a, [doi]: "added" }));
+      const ref = await api.approve(projectId, { mode: "doi", doi }, collectionId);
+      setAdded((a) => ({ ...a, [doi]: ref.label === "verified" ? "added" : "added-unverified" }));
       onAdded();
     } catch (err) {
       if (err instanceof ApiError && err.status === 409) setAdded((a) => ({ ...a, [doi]: "added" }));
@@ -71,7 +71,7 @@ export function FindPanel({ projectId, onAdded, collectionId }: Props) {
           <ul className="cards">
             {res.results.map((r, i) => {
               const doi = r.record.doi;
-              const inList = r.in_list || (doi ? added[doi] === "added" : false);
+              const inList = r.in_list || (doi ? Boolean(added[doi]) : false);
               return (
                 <li key={doi ?? i} className="card">
                   <div className="card-head">
@@ -82,7 +82,11 @@ export function FindPanel({ projectId, onAdded, collectionId }: Props) {
                   <div className="actions">
                     {doi ? (
                       inList ? (
-                        <span className="pill-done">✓ In your library</span>
+                        added[doi!] === "added-unverified" ? (
+                          <span className="notice notice-warn">Added as Not yet verified — a database was busy. Use Check again in your library.</span>
+                        ) : (
+                          <span className="pill-done">✓ In your library</span>
+                        )
                       ) : (
                         <button className="btn-primary" onClick={() => approve(doi)} disabled={adding === doi}>
                           {adding === doi ? "Checking and adding…" : "Approve & add to library"}

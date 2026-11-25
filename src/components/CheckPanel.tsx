@@ -26,6 +26,7 @@ export function CheckPanel({ projectId, onAdded, collectionId }: Props) {
   const [lastInput, setLastInput] = useState<CheckInput | null>(null);
   const [adding, setAdding] = useState(false);
   const [added, setAdded] = useState(false);
+  const [addedNote, setAddedNote] = useState("");
 
   function input(): CheckInput | null {
     if (mode === "text") return text.trim() ? { mode: "text", text: text.trim() } : null;
@@ -52,6 +53,7 @@ export function CheckPanel({ projectId, onAdded, collectionId }: Props) {
     setBusy(true);
     setResult(null);
     setAdded(false);
+    setAddedNote("");
     try {
       const r = await api.check(projectId, inp);
       setResult(r);
@@ -68,8 +70,9 @@ export function CheckPanel({ projectId, onAdded, collectionId }: Props) {
     setAdding(true);
     setError("");
     try {
-      await api.approve(projectId, lastInput, collectionId);
+      const ref = await api.approve(projectId, lastInput, collectionId);
       setAdded(true);
+      setAddedNote(result?.label === "verified" && ref.label !== "verified" ? "Added, but as Not yet verified: a database was busy during the final live check. Open it in your library and use Check again." : "");
       onAdded();
     } catch (err) {
       if (err instanceof ApiError && err.status === 422 && err.result) {
@@ -161,7 +164,10 @@ export function CheckPanel({ projectId, onAdded, collectionId }: Props) {
 
           <div className="actions">
             {result.label === "verified" && (added || result.in_list ? (
-              <span className="pill-done">✓ In your library</span>
+              <>
+                <span className="pill-done">✓ In your library</span>
+                {addedNote && <p className="notice notice-warn" role="status">{addedNote}</p>}
+              </>
             ) : (
               <button className="btn-primary" onClick={approve} disabled={adding}>
                 {adding ? "Adding…" : "Approve & add to library"}

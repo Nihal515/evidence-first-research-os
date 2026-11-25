@@ -318,3 +318,32 @@ def test_crossref_to_csl_for_apa():
     assert csl["issued"] == {"date-parts": [[2015, 5, 27]]}
     assert csl["author"][0] == {"family": "LeCun", "given": "Yann"}
     assert csl["DOI"] == LECUN_DOI
+
+
+# ------------------------------------------------------------------ partial outages
+def test_partial_outage_is_never_not_found(monkeypatch):
+    """Crossref rate-limited and OpenAlex has no match: a real paper must not be called
+    Not found ("may not exist"). It is Not yet verified until every source answers."""
+    Fake(monkeypatch, search=p.UNAVAILABLE, oa_search=[])
+    for result in (
+        v.verify_fields(None, title="Deep learning", authors="LeCun, Y.", year=2015),
+        v.verify_text(None, "LeCun, Y., Bengio, Y., & Hinton, G. (2015). Deep learning. Nature, 521(7553), 436–444."),
+    ):
+        assert result.label == NOT_YET_VERIFIED, result.reason
+        assert "Not every database could be checked" in result.reason and "Crossref" in result.reason
+
+
+def test_partial_outage_with_a_near_miss_is_not_yet_verified(monkeypatch):
+    Fake(monkeypatch, search=[LECUN], oa_search=p.UNAVAILABLE)
+    result = v.verify_fields(None, title="Deep learning", authors="Fabricated, Zed", year=2015)
+    assert result.label == NOT_YET_VERIFIED and "Closest record" in result.reason
+
+
+def test_all_sources_answered_and_no_match_is_not_found(monkeypatch):
+    Fake(monkeypatch, search=[UNRELATED], oa_search=[])
+    assert v.verify_fields(None, title="Invented paper about lunar llamas", authors="Nobody, A.", year=2024).label == NOT_FOUND
+
+
+def test_unregistered_doi_is_not_found_even_if_crossref_is_down(monkeypatch):
+    Fake(monkeypatch, work=p.UNAVAILABLE, handle=p.NOT_FOUND, oa_doi=p.UNAVAILABLE)
+    assert v.verify_fields(None, title="x", doi="10.9999/made.up").label == NOT_FOUND  # doi.org is definitive

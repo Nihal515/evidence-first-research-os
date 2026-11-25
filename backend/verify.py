@@ -162,6 +162,19 @@ def _doi_outcome(status, doi, sources, unavailable) -> Optional[VerifyResult]:
 
 
 # ------------------------------------------------------------------ structured input
+def _partial_outage(sources: list[str], unavailable: list[str], near) -> "VerifyResult":
+    """Some database could not be reached and nothing matched in the ones that answered.
+    That is not evidence the work does not exist, so the label is Not yet verified — never
+    Not found (which would tell a student a real paper may be made up)."""
+    closest = f" Closest record in {' and '.join(sources)}: {_who(near[0])}." if near else ""
+    return VerifyResult(
+        NOT_YET_VERIFIED,
+        f"Not every database could be checked, so this reference is not yet verified.{closest} "
+        "Try again in a moment." + _unavailable_note(unavailable),
+        near[1] if near else [], sources, unavailable, near[0] if near else None,
+    )
+
+
 def verify_fields(client: httpx.Client, *, title: str = "", authors: str = "", year: Optional[int] = None,
                   doi: str = "") -> VerifyResult:
     title, authors, doi = (title or "").strip(), (authors or "").strip(), (doi or "").strip()
@@ -240,6 +253,8 @@ def verify_fields(client: httpx.Client, *, title: str = "", authors: str = "", y
             + _unavailable_note(unavailable),
             [], sources, unavailable,
         )
+    if unavailable:
+        return _partial_outage(sources, unavailable, near)
     if near:
         rec, checks = near
         return VerifyResult(
@@ -316,6 +331,8 @@ def verify_text(client: httpx.Client, text: str) -> VerifyResult:
             + _unavailable_note(unavailable),
             [], sources, unavailable,
         )
+    if unavailable:
+        return _partial_outage(sources, unavailable, near)
     if near:
         rec, checks = near
         return VerifyResult(

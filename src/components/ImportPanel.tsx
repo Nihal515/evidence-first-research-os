@@ -66,8 +66,9 @@ export function ImportPanel({ projectId, onAdded, collectionId }: Props) {
   async function approve(i: number) {
     update(i, { state: "adding", error: undefined });
     try {
-      await api.approve(projectId, importInput(rows[i].item), collectionId);
-      update(i, { state: "added" });
+      const ref = await api.approve(projectId, importInput(rows[i].item), collectionId);
+      update(i, { state: "added", error: rows[i].result?.label === "verified" && ref.label !== "verified"
+        ? "Added as Not yet verified: a database was busy. Use Check again in your library." : undefined });
       onAdded();
     } catch (err) {
       if (err instanceof ApiError && err.status === 409) update(i, { state: "exists" });

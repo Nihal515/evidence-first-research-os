@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import os
 import re
+import time
 from typing import Literal, Optional
 
 from fastapi import FastAPI, HTTPException, Path, Query
@@ -229,7 +230,11 @@ def approve_reference(body: CheckIn, pid: str = Path(pattern=ID)):
     engine = require_db()
     require_project(engine, pid)
     with providers.make_client() as client:
+        started = time.monotonic()
         result = run_check(client, body)
+        if result.label == NOT_YET_VERIFIED and result.unavailable and time.monotonic() - started < 10:
+            time.sleep(1.5)  # a database was briefly busy (e.g. rate limited): check once more
+            result = run_check(client, body)
         if result.label == NOT_FOUND:
             raise HTTPException(422, {"message": "This reference could not be verified, so it was not added.",
                                       "result": result.to_dict()})

@@ -127,3 +127,34 @@ def test_bad_ids_and_inputs_are_rejected(api):
     pid = make_project(api)
     assert api.post(f"/api/projects/{pid}/check", json={"mode": "fields", "authors": "Only authors"}).status_code == 400
     assert api.post(f"/api/projects/{pid}/check", json={"mode": "fields", "title": "x", "year": 3000}).status_code == 422
+
+
+def test_approval_rechecks_once_after_a_brief_outage(api, monkeypatch):
+    """The user saw Verified; at approval Crossref is briefly rate-limited. The server
+    checks once more and adds it as Verified, instead of calling it Not found."""
+    Fake(monkeypatch, work=LECUN, updates=[], oa_search=[])
+    calls = {"n": 0}
+
+    def flaky_search(c, q, rows=10):
+        calls["n"] += 1
+        if calls["n"] == 1:
+            return p.ProviderResult(p.UNAVAILABLE, "Crossref", detail="rate limited")
+        return p.ProviderResult(p.OK, "Crossref", [LECUN])
+
+    monkeypatch.setattr(p, "crossref_search", flaky_search)
+    import backend.app as app_module
+    monkeypatch.setattr(app_module.time, "sleep", lambda s: None)
+    pid = make_project(api)
+    text = "LeCun, Y., Bengio, Y., & Hinton, G. (2015). Deep learning. Nature, 521(7553), 436–444."
+    r = api.post(f"/api/projects/{pid}/references", json={"mode": "text", "text": text})
+    assert r.status_code == 201 and r.json()["label"] == "verified" and calls["n"] == 2
+
+
+def test_approval_during_a_lasting_outage_is_not_yet_verified_never_not_found(api, monkeypatch):
+    Fake(monkeypatch, work=LECUN, updates=[], search=p.UNAVAILABLE, oa_search=[])
+    import backend.app as app_module
+    monkeypatch.setattr(app_module.time, "sleep", lambda s: None)
+    pid = make_project(api)
+    text = "LeCun, Y., Bengio, Y., & Hinton, G. (2015). Deep learning. Nature, 521(7553), 436–444."
+    r = api.post(f"/api/projects/{pid}/references", json={"mode": "text", "text": text})
+    assert r.status_code == 201 and r.json()["label"] == "not_yet_verified"
