@@ -162,6 +162,39 @@ def _doi_outcome(status, doi, sources, unavailable) -> Optional[VerifyResult]:
 
 
 # ------------------------------------------------------------------ structured input
+# ------------------------------------------------------------------ thin evidence guards
+_PLACEHOLDER = re.compile(
+    r"^(citation needed|cite|citation|ref|reference|references|source|source needed|todo|to do|tbd|tba|tbc|"
+    r"x+|\?+|insert (a )?(citation|reference|source)( here)?|add (a )?(citation|reference|ref|source)( here)?|placeholder|"
+    r"author,? year|author \(year\)|lorem ipsum)$"
+)
+_STOP = {"a", "an", "the", "of", "and", "or", "in", "on", "for", "to", "with", "at", "by", "from", "as", "is"}
+MIN_TITLE_ONLY_WORDS = 4
+
+
+def looks_like_placeholder(text: str) -> bool:
+    """'[citation needed]', 'TODO', '(Author, Year)' and similar are not references."""
+    t = re.sub(r"[\[\]{}()<>*_#:;.,!\"'`]+", " ", (text or "").lower())
+    t = re.sub(r"\s+", " ", t).strip()
+    return bool(t) and bool(_PLACEHOLDER.match(t))
+
+
+def distinctive_title(title: str) -> bool:
+    """A title with at least four meaningful words; shorter ones ('Deep learning',
+    'Citation Needed') fit many works, so they cannot verify a reference on their own."""
+    words = [w for w in norm(title).split() if w not in _STOP and not w.isdigit()]
+    return len(words) >= MIN_TITLE_ONLY_WORDS
+
+
+def _thin_title_result(rec, checks, sources, unavailable) -> "VerifyResult":
+    return VerifyResult(
+        NOT_YET_VERIFIED,
+        f"Only a short title matched ({_who(rec)}). Titles this short fit many works, so this is not verified. "
+        "Add the author and year, or the DOI.",
+        checks, sources, unavailable, rec,
+    )
+
+
 def _partial_outage(sources: list[str], unavailable: list[str], near) -> "VerifyResult":
     """Some database could not be reached and nothing matched in the ones that answered.
     That is not evidence the work does not exist, so the label is Not yet verified — never
@@ -213,6 +246,7 @@ def verify_fields(client: httpx.Client, *, title: str = "", authors: str = "", y
     unavailable: list[str] = []
     near: Optional[tuple[Record, list[FieldCheck]]] = None
     title_only = not authors and not year
+    nonlocal_thin: list = []  # short-title matches that cannot verify on their own
 
     def evaluate(records: list[Record]) -> Optional[VerifyResult]:
         nonlocal near
@@ -221,6 +255,9 @@ def verify_fields(client: httpx.Client, *, title: str = "", authors: str = "", y
             if title_only and title_similarity(title, rec) < TITLE_ONLY_MATCH:
                 continue
             if all_match(checks):
+                if title_only and not distinctive_title(rec.title):
+                    nonlocal_thin.append((rec, checks))
+                    continue
                 note = " Only the title was checked — add the author and year for a stronger check." if title_only else ""
                 return VerifyResult(VERIFIED, f"Matched live in {rec.provider}: {_who(rec)}.{note}",
                                     checks, list(sources), list(unavailable), rec)
@@ -246,6 +283,9 @@ def verify_fields(client: httpx.Client, *, title: str = "", authors: str = "", y
     else:
         unavailable.append(f"OpenAlex: {oa.detail}")
 
+    if nonlocal_thin:
+        rec, checks = nonlocal_thin[0]
+        return _thin_title_result(rec, checks, sources, unavailable)
     if not sources:
         return VerifyResult(
             NOT_YET_VERIFIED,
@@ -278,6 +318,8 @@ def cr_safe(items):
 # ------------------------------------------------------------------ pasted citation
 def verify_text(client: httpx.Client, text: str) -> VerifyResult:
     text = (text or "").strip()
+    if looks_like_placeholder(text):
+        raise ValueError("This looks like a placeholder, not a reference. Paste the full reference or a DOI.")
     if len(norm(text).split()) < 2 and not extract_doi(text):
         raise ValueError("Paste a full reference (authors, year, title) or a DOI.")
 
@@ -305,6 +347,7 @@ def verify_text(client: httpx.Client, text: str) -> VerifyResult:
     sources: list[str] = []
     unavailable: list[str] = []
     near = None
+    thin = None  # a short title matched with nothing else to back it
     for fetch, build, name in (
         (lambda: p.crossref_search(client, text), record_from_crossref, "Crossref"),
         (lambda: p.openalex_search(client, text[:300]), record_from_openalex, "OpenAlex"),
@@ -321,9 +364,15 @@ def verify_text(client: httpx.Client, text: str) -> VerifyResult:
             rec = build(item)
             checks = compare_raw(rec, text)
             if all_match(checks) and checks[0].status == "match":
+                backed = any(c.status == "match" for c in checks[1:])  # author or year also matched
+                if not backed and not distinctive_title(rec.title):
+                    thin = thin or (rec, checks)
+                    continue
                 return VerifyResult(VERIFIED, f"Matched live in {name}: {_who(rec)}.", checks, list(sources), list(unavailable), rec)
             if checks[0].status == "match" and _better((rec, checks), near):
                 near = (rec, checks)
+    if thin:
+        return _thin_title_result(thin[0], thin[1], sources, unavailable)
     if not sources:
         return VerifyResult(
             NOT_YET_VERIFIED,

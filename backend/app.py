@@ -15,6 +15,7 @@ from pydantic import BaseModel, Field
 from . import auth
 from . import db
 from . import keycheck
+from . import lab
 from . import library
 from . import openaccess
 from . import providers
@@ -222,6 +223,54 @@ def run_search(pid: str = Path(pattern=ID), q: str = Query(min_length=2, max_len
            {"query": q[:200], "provider": res["provider"], "status": res["status"], "results": len(results)})
     return {"status": res["status"], "provider": res["provider"], "retrieved_at": res["retrieved_at"],
             "note": res.get("note", ""), "results": results}
+
+
+# ------------------------------------------------------------------ public check (landing page; nothing is saved)
+@app.post("/api/check")
+def public_check(body: CheckIn):
+    """Check one reference without a project — used by the landing page and the Check
+    page. Nothing is stored or logged. A Verified result with a DOI also gets a live
+    retraction check."""
+    with providers.make_client() as client:
+        result = run_check(client, body)
+        out = result.to_dict()
+        rec = result.record
+        out["retraction"] = retraction_status(client, rec.doi) if result.label == VERIFIED and rec and rec.doi else None
+    return out
+
+
+# ------------------------------------------------------------------ Integrity Lab
+@app.get("/api/lab")
+def lab_corpus():
+    return {"manifest": lab.MANIFEST, "families": [{"id": f, "label": lab.FAMILY_LABELS[f]} for f in lab.FAMILIES],
+            "cases": lab.CORPUS}
+
+
+@app.post("/api/lab/run")
+def lab_run(case_id: str = Query(min_length=3, max_length=120)):
+    """Run one fixed corpus case through the live checker and score it. The input comes
+    from the corpus on the server, so a run cannot be altered from the browser."""
+    case = lab.BY_ID.get(case_id)
+    if not case:
+        raise HTTPException(404, "Unknown case.")
+    body = CheckIn(**lab.check_input(case))
+    with providers.make_client() as client:
+        try:
+            result = run_check(client, body)
+        except HTTPException as exc:
+            if exc.status_code == 400:  # the input was refused as too thin to be a reference
+                return {"case_id": case_id, "refused": True, "reason": str(exc.detail), "label": None,
+                        "checked_at": now_iso(), "evaluation": lab.evaluate(case, None, refused=True)}
+            raise
+        out = result.to_dict()
+        rec = result.record
+        retraction = None
+        if result.label == VERIFIED and rec and rec.doi and case["expected"] == "retraction-flag":
+            retraction = retraction_status(client, rec.doi)
+    out.update(case_id=case_id, refused=False, retraction=retraction,
+               evaluation=lab.evaluate(case, result.label, unavailable=bool(result.unavailable),
+                                       retraction=(retraction or {}).get("status")))
+    return out
 
 
 # ------------------------------------------------------------------ live reference check (nothing is saved)

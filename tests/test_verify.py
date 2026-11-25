@@ -216,9 +216,31 @@ def test_real_title_with_wrong_year_is_not_found(monkeypatch):
 
 
 def test_title_only_needs_near_exact_match(monkeypatch):
+    long_title = dict(LECUN, title=["Deep learning for protein structure prediction at scale"])
+    Fake(monkeypatch, search=[long_title], oa_search=[])
+    assert v.verify_fields(None, title="Deep learning for protein structure prediction at scale").label == VERIFIED
+    assert v.verify_fields(None, title="Deep learning for protein structure prediction in classrooms").label == NOT_FOUND
+
+
+def test_short_title_alone_cannot_verify(monkeypatch):
+    """'Deep learning' fits many works (LeCun 2015, Goodfellow 2016...): a two-word title on
+    its own is not enough evidence, typed or pasted."""
     Fake(monkeypatch, search=[LECUN], oa_search=[])
-    assert v.verify_fields(None, title="Deep learning").label == VERIFIED
-    assert v.verify_fields(None, title="Deep learning methods for classrooms").label == NOT_FOUND
+    r = v.verify_fields(None, title="Deep learning")
+    assert r.label == NOT_YET_VERIFIED and "short title" in r.reason
+    no_authors = dict(LECUN, title=["Learning to cite"], author=[])
+    Fake(monkeypatch, search=[no_authors], oa_search=[])
+    r = v.verify_text(None, "Learning to cite. A short note.")  # title matches; nothing else can be compared
+    assert r.label == NOT_YET_VERIFIED and "Add the author and year" in r.reason
+    Fake(monkeypatch, search=[LECUN], oa_search=[])
+    # with the author or year it verifies as before
+    assert v.verify_fields(None, title="Deep learning", authors="LeCun", year=2015).label == VERIFIED
+
+
+@pytest.mark.parametrize("text", ["[citation needed]", "[ citation needed ]", "TODO", "(Author, Year)", "???", "TBD."])
+def test_placeholders_are_refused(text):
+    with pytest.raises(ValueError, match="placeholder|full reference"):
+        v.verify_text(None, text)
 
 
 def test_search_unavailable_everywhere_is_not_yet_verified(monkeypatch):
