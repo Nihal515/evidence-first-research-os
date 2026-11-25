@@ -10,10 +10,23 @@ const EVENT_TEXT: Record<string, string> = {
   SEARCH_RUN: "Searched scholarly records",
   REFERENCE_CHECKED: "Checked a reference live",
   REFERENCE_APPROVED: "You approved a source",
-  REFERENCE_REMOVED: "You removed a source",
+  REFERENCE_REMOVED: "You moved a source to Trash",
+  REFERENCE_RESTORED: "You restored a source from Trash",
+  REFERENCE_DELETED: "You deleted a source for good",
   REFERENCE_RECHECKED: "Re-checked a source",
+  REFERENCES_MERGED: "You merged duplicate sources",
+  COLLECTION_CREATED: "You created a collection",
+  COLLECTION_UPDATED: "You changed a collection",
+  COLLECTION_DELETED: "You deleted a collection",
+  BULK_TRASH: "You moved sources to Trash",
+  BULK_RESTORE: "You restored sources from Trash",
+  BULK_DELETE_FOREVER: "You deleted sources for good",
+  BULK_ADD_TO_COLLECTION: "You filed sources in a collection",
+  BULK_REMOVE_FROM_COLLECTION: "You removed sources from a collection",
   EXPORT_APA_COPIED: "Copied the APA 7 list",
   EXPORT_APA_DOWNLOADED: "Downloaded the APA 7 list",
+  EXPORT_BIBTEX_DOWNLOADED: "Downloaded BibTeX",
+  EXPORT_RIS_DOWNLOADED: "Downloaded RIS",
   STATEMENT_COPIED: "Copied the AI-use statement",
   STATEMENT_DOWNLOADED: "Downloaded the AI-use statement",
 };
@@ -29,7 +42,9 @@ function describe(e: AuditEvent): string {
   if (e.event === "SEARCH_RUN") return `“${d.query}” · ${d.results} results from ${d.provider ?? "no source (unavailable)"}`;
   if (e.event === "REFERENCE_CHECKED") return `${LABEL_WORD[d.label] ?? d.label} · ${(d.sources || []).join(", ") || "no source answered"}`;
   if (e.event === "REFERENCE_APPROVED") return `${LABEL_WORD[d.label] ?? d.label} · ${d.title ?? ""}`;
-  if (e.event === "REFERENCE_REMOVED") return d.title ?? "";
+  if (["REFERENCE_REMOVED", "REFERENCE_RESTORED", "REFERENCE_DELETED"].includes(e.event)) return d.title ?? "";
+  if (e.event.startsWith("COLLECTION_")) return d.name ?? "";
+  if (e.event.startsWith("BULK_") || e.event === "REFERENCES_MERGED") return `${d.count ?? 0} sources`;
   if (e.event.startsWith("EXPORT")) return `${d.count ?? 0} references${d.format ? ` · ${d.format}` : ""}`;
   return "";
 }

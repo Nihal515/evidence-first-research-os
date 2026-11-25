@@ -8,11 +8,12 @@ import { TrustLabel } from "./TrustLabel";
 interface Props {
   projectId: string;
   onAdded: () => void;
+  collectionId?: string | null;
 }
 
 const STATUS_TEXT = { match: "Matches", mismatch: "Does not match", not_provided: "Not entered" } as const;
 
-export function CheckPanel({ projectId, onAdded }: Props) {
+export function CheckPanel({ projectId, onAdded, collectionId }: Props) {
   const [mode, setMode] = useState<"fields" | "text">("fields");
   const [title, setTitle] = useState("");
   const [authors, setAuthors] = useState("");
@@ -67,7 +68,7 @@ export function CheckPanel({ projectId, onAdded }: Props) {
     setAdding(true);
     setError("");
     try {
-      await api.approve(projectId, lastInput);
+      await api.approve(projectId, lastInput, collectionId);
       setAdded(true);
       onAdded();
     } catch (err) {
@@ -160,10 +161,10 @@ export function CheckPanel({ projectId, onAdded }: Props) {
 
           <div className="actions">
             {result.label === "verified" && (added || result.in_list ? (
-              <span className="pill-done">✓ In your reference list</span>
+              <span className="pill-done">✓ In your library</span>
             ) : (
               <button className="btn-primary" onClick={approve} disabled={adding}>
-                {adding ? "Adding…" : "Approve & add to my references"}
+                {adding ? "Adding…" : "Approve & add to library"}
               </button>
             ))}
             {result.label === "not_yet_verified" && (
@@ -180,7 +181,7 @@ export function CheckPanel({ projectId, onAdded }: Props) {
             )}
             {result.label === "not_found" && (
               <p className="blocked" role="status">
-                Not added. A reference that could not be verified cannot go into your reference list.
+                Not added. A reference that could not be verified cannot go into your library.
               </p>
             )}
           </div>

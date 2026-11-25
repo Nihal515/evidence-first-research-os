@@ -20,6 +20,27 @@ nothing enters the reference list without the student's one-click approval.
 Also in stage 1a: retraction check (Crossref, including Retraction Watch data) on every approved paper,
 re-check for references that could not be verified, and an activity log.
 
+## Library (reference-manager layout)
+
+A familiar reference-manager layout — icon rail, library sidebar, sortable reference table and a
+detail panel — with the trust labels built in.
+
+| Feature | Details |
+|---|---|
+| **Library views** | All references, Recently added (14 days), Recently read, Favourites, Unsorted, **Needs attention** (not verified, retracted, expression of concern or retraction check failed), Duplicates, Trash |
+| **Collections** | Nested collections; create, rename, delete (references are kept); drag rows onto a collection; approve a source straight into the open collection |
+| **Table** | Sort by authors, year, title, source, trust or date added; search title / authors / source / DOI / notes (accent- and case-insensitive); filter by trust label, retraction, year range, unread |
+| **Bulk actions** | Select many → add to / remove from collection, favourite, mark read, export, move to Trash; restore or delete for good from Trash (with confirmation) |
+| **Detail panel** | Trust label and why, field-by-field check results, retraction status, *Check again*, one-click APA 7 citation, collections, notes (autosave), read / unread |
+| **Duplicates** | Found by code, not AI: near-identical titles (≥ 0.93 similarity), years within one, a shared author family name. Merge keeps the chosen record (Verified first) and moves the others to Trash, carrying collections, favourite and notes over |
+| **Export** | APA 7 (copy, Word, text), **BibTeX** and **RIS** — Verified references only, the rest reported, never guessed |
+| **Import** | BibTeX / RIS from Mendeley, Zotero, EndNote or Google Scholar. Every item is checked live; a made-up entry is Not found and cannot be added; nothing is added until approved |
+| **Phone** | Slide-out library menu, reference cards, full-screen details, bottom navigation |
+
+Library actions (favourite, collections, notes, Trash) can never change a trust label: that only
+changes through a live re-check. The schema migrates in place (new columns are added; nothing is
+dropped), serialised with a Postgres advisory lock so concurrent cold starts are safe.
+
 **Verified** means: a live record matches every field the student entered. For a pasted citation, the
 record's title, first author and year must all appear in it. **Not found** means no match in the
 databases that were checked — it does not prove a work does not exist anywhere.
@@ -46,9 +67,11 @@ npm run dev                                                             # termin
 ## Tests
 
 ```bash
-python -m pytest tests -q                      # 56 offline tests (recorded provider responses)
+python -m pytest tests -q                      # 84 offline tests (recorded provider responses)
 RUN_LIVE=1 python -m pytest tests/test_live.py # 10 tests against the real Crossref / doi.org / OpenAlex
-npm test                                       # APA 7 formatting and AI-use statement
+npm test                                       # 22 tests: APA 7, AI-use statement, library views, BibTeX / RIS
+node tests/e2e/journey.cjs                     # browser journey, desktop + phone (needs Playwright; BASE=<site url>)
+python tests/e2e/live_api_check.py <site url>  # 32 live checks of the deployed API
 ```
 
 ## Environment variables (Vercel → Settings → Environment Variables)

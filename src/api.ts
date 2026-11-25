@@ -1,6 +1,8 @@
 import type {
   AuditEvent,
+  BulkAction,
   CheckInput,
+  Collection,
   CheckResult,
   Project,
   Reference,
@@ -57,9 +59,27 @@ export const api = {
     request<Project>(`/api/projects/${id}`, { method: "PUT", body: JSON.stringify({ title, question }) }),
   search: (id: string, q: string) => request<SearchResponse>(`/api/projects/${id}/search?q=${encodeURIComponent(q)}`),
   check: (id: string, input: CheckInput) => request<CheckResult>(`/api/projects/${id}/check`, json(input)),
-  approve: (id: string, input: CheckInput) => request<Reference>(`/api/projects/${id}/references`, json(input)),
-  references: (id: string) => request<Reference[]>(`/api/projects/${id}/references`),
-  remove: (id: string, rid: string) => request<{ removed: string }>(`/api/projects/${id}/references/${rid}`, { method: "DELETE" }),
+  approve: (id: string, input: CheckInput, collectionId?: string | null) =>
+    request<Reference>(`/api/projects/${id}/references`, json(collectionId ? { ...input, collection_id: collectionId } : input)),
+  references: (id: string, includeTrash = false) =>
+    request<Reference[]>(`/api/projects/${id}/references${includeTrash ? "?include_trash=true" : ""}`),
+  remove: (id: string, rid: string, permanent = false) =>
+    request<{ removed: string }>(`/api/projects/${id}/references/${rid}${permanent ? "?permanent=true" : ""}`, { method: "DELETE" }),
+  patch: (id: string, rid: string, body: { favorite?: boolean; read?: boolean; notes?: string; trashed?: boolean }) =>
+    request<Reference>(`/api/projects/${id}/references/${rid}`, { method: "PATCH", body: JSON.stringify(body) }),
+  bulk: (id: string, ids: string[], action: BulkAction, collectionId?: string) =>
+    request<{ count: number }>(`/api/projects/${id}/references/bulk`,
+      json({ ids, action, ...(collectionId ? { collection_id: collectionId } : {}) })),
+  collections: (id: string) => request<Collection[]>(`/api/projects/${id}/collections`),
+  createCollection: (id: string, name: string, parentId?: string | null) =>
+    request<Collection>(`/api/projects/${id}/collections`, json({ name, ...(parentId ? { parent_id: parentId } : {}) })),
+  renameCollection: (id: string, cid: string, name: string) =>
+    request<Collection>(`/api/projects/${id}/collections/${cid}`, { method: "PATCH", body: JSON.stringify({ name }) }),
+  deleteCollection: (id: string, cid: string) =>
+    request<{ deleted: string[] }>(`/api/projects/${id}/collections/${cid}`, { method: "DELETE" }),
+  duplicates: (id: string) => request<{ groups: string[][]; rule: string }>(`/api/projects/${id}/duplicates`),
+  merge: (id: string, keepId: string, removeIds: string[]) =>
+    request<Reference>(`/api/projects/${id}/duplicates/merge`, json({ keep_id: keepId, remove_ids: removeIds })),
   recheck: (id: string, rid: string) => request<Reference>(`/api/projects/${id}/references/${rid}/recheck`, { method: "POST" }),
   audit: (id: string) => request<AuditEvent[]>(`/api/projects/${id}/audit`),
   summary: (id: string) => request<Summary>(`/api/projects/${id}/summary`),

@@ -7,9 +7,10 @@ import { TrustLabel } from "./TrustLabel";
 interface Props {
   projectId: string;
   onAdded: () => void;
+  collectionId?: string | null;
 }
 
-export function FindPanel({ projectId, onAdded }: Props) {
+export function FindPanel({ projectId, onAdded, collectionId }: Props) {
   const [q, setQ] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
@@ -35,7 +36,7 @@ export function FindPanel({ projectId, onAdded }: Props) {
     setAdding(doi);
     setError("");
     try {
-      await api.approve(projectId, { mode: "doi", doi });
+      await api.approve(projectId, { mode: "doi", doi }, collectionId);
       setAdded((a) => ({ ...a, [doi]: "added" }));
       onAdded();
     } catch (err) {
@@ -48,8 +49,8 @@ export function FindPanel({ projectId, onAdded }: Props) {
 
   return (
     <div className="panel">
-      <h2>Find sources</h2>
-      <p className="hint">Results are live scholarly records. Nothing is added to your reference list until you approve it.</p>
+      <h2>Search scholarly databases</h2>
+      <p className="hint">Results are live scholarly records. Nothing is added to your library until you approve it.</p>
       <form onSubmit={search} className="search-row" role="search">
         <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Topic, title or author" aria-label="Search scholarly records" maxLength={300} />
         <button className="btn-primary" disabled={busy || q.trim().length < 2}>{busy ? "Searching…" : "Search"}</button>
@@ -81,10 +82,10 @@ export function FindPanel({ projectId, onAdded }: Props) {
                   <div className="actions">
                     {doi ? (
                       inList ? (
-                        <span className="pill-done">✓ In your reference list</span>
+                        <span className="pill-done">✓ In your library</span>
                       ) : (
                         <button className="btn-primary" onClick={() => approve(doi)} disabled={adding === doi}>
-                          {adding === doi ? "Checking and adding…" : "Approve & add to my references"}
+                          {adding === doi ? "Checking and adding…" : "Approve & add to library"}
                         </button>
                       )
                     ) : (

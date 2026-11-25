@@ -78,7 +78,27 @@ export interface Reference {
   user_input: Record<string, unknown>;
   checked_at: string;
   approved_at: string;
+  // library state
+  favorite: boolean;
+  read_at: string | null;
+  deleted_at: string | null;
+  notes: string;
+  abstract: string | null;
+  oa_pdf_url: string | null;
+  has_uploaded_pdf: boolean;
+  collection_ids: string[];
 }
+
+export interface Collection {
+  id: string;
+  name: string;
+  parent_id: string | null;
+  created_at: string;
+}
+
+export type BulkAction =
+  | "favorite" | "unfavorite" | "mark_read" | "mark_unread" | "trash" | "restore" | "delete_forever"
+  | "add_to_collection" | "remove_from_collection";
 
 export interface AuditEvent {
   ts: string;

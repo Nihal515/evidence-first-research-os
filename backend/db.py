@@ -8,18 +8,23 @@ from datetime import datetime, timezone
 from typing import Optional
 
 from sqlalchemy import (
+    Boolean,
     Column,
     DateTime,
     Integer,
     MetaData,
+    PrimaryKeyConstraint,
     String,
     Table,
     Text,
     UniqueConstraint,
     create_engine,
     delete,
+    false,
+    inspect,
     insert,
     select,
+    text,
     update,
 )
 from sqlalchemy.engine import Engine
@@ -35,6 +40,7 @@ projects = Table(
     Column("question", Text, nullable=False, default=""),
     Column("created_at", DateTime(timezone=True), nullable=False),
     Column("updated_at", DateTime(timezone=True), nullable=False),
+    Column("owner_id", String(64), nullable=True, index=True),  # set when a signed-in user owns the project
 )
 
 project_references = Table(
@@ -56,7 +62,34 @@ project_references = Table(
     Column("user_input", Text, nullable=False, default="{}"),
     Column("checked_at", String(40), nullable=False),
     Column("approved_at", DateTime(timezone=True), nullable=False),
+    # library state (added in the library stage; migrated in place, never dropped)
+    Column("favorite", Boolean, nullable=False, server_default=false()),
+    Column("read_at", DateTime(timezone=True), nullable=True),
+    Column("deleted_at", DateTime(timezone=True), nullable=True),  # set = in Trash
+    Column("notes", Text, nullable=True),
+    Column("abstract", Text, nullable=True),
+    Column("oa_pdf_url", Text, nullable=True),      # free legal copy found by OpenAlex
+    Column("pdf_pathname", Text, nullable=True),    # the user's own uploaded PDF (private storage)
     UniqueConstraint("project_id", "doi", name="uq_project_doi"),
+)
+
+collections = Table(
+    "collections",
+    metadata,
+    Column("id", String(32), primary_key=True),
+    Column("project_id", String(32), nullable=False, index=True),
+    Column("name", String(120), nullable=False),
+    Column("parent_id", String(32), nullable=True),
+    Column("created_at", DateTime(timezone=True), nullable=False),
+)
+
+reference_collections = Table(
+    "reference_collections",
+    metadata,
+    Column("reference_id", String(32), nullable=False),
+    Column("collection_id", String(32), nullable=False, index=True),
+    Column("project_id", String(32), nullable=False, index=True),
+    PrimaryKeyConstraint("reference_id", "collection_id", name="pk_reference_collection"),
 )
 
 audit_events = Table(
@@ -83,18 +116,61 @@ def database_url() -> str:
     return url
 
 
+SCHEMA_LOCK_KEY = 4172026  # Postgres advisory lock: one instance sets up the schema at a time
+
+
 def get_engine() -> Optional[Engine]:
-    """Create the engine once per process and make sure the tables exist."""
+    """Create the engine once per process and make sure the schema is up to date."""
     global _engine, _engine_url
     url = database_url()
     if not url:
         return None
     if _engine is None or _engine_url != url:
         kwargs = {"poolclass": NullPool} if url.startswith("postgresql") else {}
-        _engine = create_engine(url, **kwargs)
-        _engine_url = url
-        metadata.create_all(_engine)
+        engine = create_engine(url, **kwargs)
+        _ensure_schema(engine)
+        _engine, _engine_url = engine, url  # only remembered once the schema is ready
     return _engine
+
+
+def _ensure_schema(engine: Engine) -> None:
+    is_pg = engine.dialect.name == "postgresql"
+    with engine.connect() as conn:
+        if is_pg:
+            conn.execute(text("SELECT pg_advisory_lock(:k)"), {"k": SCHEMA_LOCK_KEY})
+            conn.commit()
+        try:
+            metadata.create_all(conn)
+            _add_missing_columns(conn)
+            conn.commit()
+        finally:
+            if is_pg:
+                conn.rollback()
+                conn.execute(text("SELECT pg_advisory_unlock(:k)"), {"k": SCHEMA_LOCK_KEY})
+                conn.commit()
+
+
+def _add_missing_columns(conn) -> None:
+    """Safe in-place migration: add any column that exists in the code but not yet in
+    the database. Existing tables and rows are never dropped or rewritten."""
+    insp = inspect(conn)
+    dialect = conn.dialect
+    for table in metadata.sorted_tables:
+        existing = {c["name"] for c in insp.get_columns(table.name)}
+        for col in table.columns:
+            if col.name in existing:
+                continue
+            ddl_type = col.type.compile(dialect=dialect)
+            default = ""
+            if col.server_default is not None:
+                if isinstance(col.type, Boolean):
+                    default = " DEFAULT 0" if dialect.name == "sqlite" else " DEFAULT false"
+                else:
+                    default = " DEFAULT ''"
+            null = "" if col.nullable else " NOT NULL"
+            # IF NOT EXISTS (Postgres) keeps a repeated migration harmless.
+            guard = " IF NOT EXISTS" if dialect.name == "postgresql" else ""
+            conn.execute(text(f"ALTER TABLE {table.name} ADD COLUMN{guard} {col.name} {ddl_type}{default}{null}"))
 
 
 def new_id() -> str:
@@ -159,14 +235,38 @@ def _ref_row(row) -> dict:
         "user_input": json.loads(row["user_input"] or "{}"),
         "checked_at": row["checked_at"],
         "approved_at": iso(row["approved_at"]),
+        "favorite": bool(row["favorite"]),
+        "read_at": iso(row["read_at"]),
+        "deleted_at": iso(row["deleted_at"]),
+        "notes": row["notes"] or "",
+        "abstract": row["abstract"],
+        "oa_pdf_url": row["oa_pdf_url"],
+        "has_uploaded_pdf": bool(row["pdf_pathname"]),
+        "collection_ids": [],
     }
 
 
-def list_references(engine: Engine, pid: str) -> list[dict]:
+def _memberships(conn, pid: str) -> dict:
+    out: dict = {}
+    for r in conn.execute(select(reference_collections).where(reference_collections.c.project_id == pid)).mappings():
+        out.setdefault(r["reference_id"], []).append(r["collection_id"])
+    return out
+
+
+def _with_collections(conn, pid: str, refs: list[dict]) -> list[dict]:
+    members = _memberships(conn, pid)
+    for ref in refs:
+        ref["collection_ids"] = sorted(members.get(ref["id"], []))
+    return refs
+
+
+def list_references(engine: Engine, pid: str, include_trash: bool = False) -> list[dict]:
+    q = select(project_references).where(project_references.c.project_id == pid)
+    if not include_trash:
+        q = q.where(project_references.c.deleted_at.is_(None))
     with engine.connect() as conn:
-        rows = conn.execute(select(project_references).where(project_references.c.project_id == pid)
-                            .order_by(project_references.c.approved_at)).mappings().all()
-    return [_ref_row(r) for r in rows]
+        rows = conn.execute(q.order_by(project_references.c.approved_at)).mappings().all()
+        return _with_collections(conn, pid, [_ref_row(r) for r in rows])
 
 
 def find_reference_by_doi(engine: Engine, pid: str, doi: str) -> Optional[dict]:
@@ -205,7 +305,103 @@ def get_reference(engine: Engine, pid: str, rid: str) -> Optional[dict]:
     with engine.connect() as conn:
         row = conn.execute(select(project_references).where(
             (project_references.c.project_id == pid) & (project_references.c.id == rid))).mappings().first()
-    return _ref_row(row) if row else None
+        if not row:
+            return None
+        return _with_collections(conn, pid, [_ref_row(row)])[0]
+
+
+def get_references(engine: Engine, pid: str, ids: list[str]) -> list[dict]:
+    if not ids:
+        return []
+    with engine.connect() as conn:
+        rows = conn.execute(select(project_references).where(
+            (project_references.c.project_id == pid) & (project_references.c.id.in_(ids)))).mappings().all()
+        return _with_collections(conn, pid, [_ref_row(r) for r in rows])
+
+
+def set_reference_fields(engine: Engine, pid: str, ids: list[str], **values) -> int:
+    """Update library fields (favorite, read_at, deleted_at, notes, abstract, oa_pdf_url, pdf_pathname)."""
+    allowed = {"favorite", "read_at", "deleted_at", "notes", "abstract", "oa_pdf_url", "pdf_pathname"}
+    values = {k: v for k, v in values.items() if k in allowed}
+    if not ids or not values:
+        return 0
+    with engine.begin() as conn:
+        res = conn.execute(update(project_references).where(
+            (project_references.c.project_id == pid) & (project_references.c.id.in_(ids))).values(**values))
+    return res.rowcount
+
+
+def delete_references(engine: Engine, pid: str, ids: list[str]) -> int:
+    if not ids:
+        return 0
+    with engine.begin() as conn:
+        conn.execute(delete(reference_collections).where(
+            (reference_collections.c.project_id == pid) & (reference_collections.c.reference_id.in_(ids))))
+        res = conn.execute(delete(project_references).where(
+            (project_references.c.project_id == pid) & (project_references.c.id.in_(ids))))
+    return res.rowcount
+
+
+# ------------------------------------------------------------------ collections
+def _collection_row(row) -> dict:
+    return {"id": row["id"], "name": row["name"], "parent_id": row["parent_id"], "created_at": iso(row["created_at"])}
+
+
+def list_collections(engine: Engine, pid: str) -> list[dict]:
+    with engine.connect() as conn:
+        rows = conn.execute(select(collections).where(collections.c.project_id == pid)
+                            .order_by(collections.c.name)).mappings().all()
+    return [_collection_row(r) for r in rows]
+
+
+def get_collection(engine: Engine, pid: str, cid: str) -> Optional[dict]:
+    with engine.connect() as conn:
+        row = conn.execute(select(collections).where(
+            (collections.c.project_id == pid) & (collections.c.id == cid))).mappings().first()
+    return _collection_row(row) if row else None
+
+
+def create_collection(engine: Engine, pid: str, name: str, parent_id: Optional[str]) -> dict:
+    cid = new_id()
+    with engine.begin() as conn:
+        conn.execute(insert(collections).values(id=cid, project_id=pid, name=name, parent_id=parent_id,
+                                                created_at=utcnow()))
+    return get_collection(engine, pid, cid)
+
+
+def update_collection(engine: Engine, pid: str, cid: str, **values) -> Optional[dict]:
+    values = {k: v for k, v in values.items() if k in {"name", "parent_id"}}
+    if values:
+        with engine.begin() as conn:
+            conn.execute(update(collections).where(
+                (collections.c.project_id == pid) & (collections.c.id == cid)).values(**values))
+    return get_collection(engine, pid, cid)
+
+
+def delete_collections(engine: Engine, pid: str, cids: list[str]) -> None:
+    """Delete collections (and their memberships). References themselves are kept."""
+    with engine.begin() as conn:
+        conn.execute(delete(reference_collections).where(
+            (reference_collections.c.project_id == pid) & (reference_collections.c.collection_id.in_(cids))))
+        conn.execute(delete(collections).where((collections.c.project_id == pid) & (collections.c.id.in_(cids))))
+
+
+def add_to_collection(engine: Engine, pid: str, cid: str, rids: list[str]) -> int:
+    with engine.begin() as conn:
+        have = {r[0] for r in conn.execute(select(reference_collections.c.reference_id).where(
+            (reference_collections.c.collection_id == cid) & (reference_collections.c.reference_id.in_(rids))))}
+        new = [r for r in rids if r not in have]
+        for rid in new:
+            conn.execute(insert(reference_collections).values(reference_id=rid, collection_id=cid, project_id=pid))
+    return len(new)
+
+
+def remove_from_collection(engine: Engine, pid: str, cid: str, rids: list[str]) -> int:
+    with engine.begin() as conn:
+        res = conn.execute(delete(reference_collections).where(
+            (reference_collections.c.project_id == pid) & (reference_collections.c.collection_id == cid)
+            & (reference_collections.c.reference_id.in_(rids))))
+    return res.rowcount
 
 
 def replace_reference(engine: Engine, pid: str, rid: str, values: dict) -> Optional[dict]:
@@ -222,10 +418,7 @@ def replace_reference(engine: Engine, pid: str, rid: str, values: dict) -> Optio
 
 
 def delete_reference(engine: Engine, pid: str, rid: str) -> bool:
-    with engine.begin() as conn:
-        res = conn.execute(delete(project_references).where(
-            (project_references.c.project_id == pid) & (project_references.c.id == rid)))
-    return res.rowcount > 0
+    return delete_references(engine, pid, [rid]) > 0
 
 
 # ------------------------------------------------------------------ audit log (append-only)

@@ -12,6 +12,7 @@ from pydantic import BaseModel, Field
 
 from . import db
 from . import keycheck
+from . import library
 from . import providers
 from .labels import LABELS, NOT_FOUND, NOT_YET_VERIFIED, VERIFIED
 from .records import normalize_doi, record_from_crossref
@@ -20,7 +21,8 @@ from .verify import now_iso, retraction_status, search, verify_fields, verify_te
 app = FastAPI(title="Evidence-First Research OS API", version="1.0.0-stage1")
 
 ID = r"^[0-9a-f]{32}$"
-CLIENT_EVENTS = {"EXPORT_APA_COPIED", "EXPORT_APA_DOWNLOADED", "STATEMENT_COPIED", "STATEMENT_DOWNLOADED"}
+CLIENT_EVENTS = {"EXPORT_APA_COPIED", "EXPORT_APA_DOWNLOADED", "EXPORT_BIBTEX_DOWNLOADED", "EXPORT_RIS_DOWNLOADED",
+                 "STATEMENT_COPIED", "STATEMENT_DOWNLOADED"}
 
 
 @app.exception_handler(Exception)
@@ -58,6 +60,7 @@ class CheckIn(BaseModel):
     year: Optional[int] = Field(default=None, ge=1500, le=2100)
     doi: str = Field(default="", max_length=300)
     text: str = Field(default="", max_length=2000)
+    collection_id: Optional[str] = Field(default=None, pattern=ID)  # file the approved source here
 
 
 class EventIn(BaseModel):
@@ -229,9 +232,15 @@ def approve_reference(body: CheckIn, pid: str = Path(pattern=ID)):
             raise HTTPException(422, {"message": "This reference could not be verified, so it was not added.",
                                       "result": result.to_dict()})
         values = _values_from_result(client, result, body)
-    if values["doi"] and db.find_reference_by_doi(engine, pid, values["doi"]):
+    existing = db.find_reference_by_doi(engine, pid, values["doi"]) if values["doi"] else None
+    if existing:
+        if existing.get("deleted_at"):
+            raise HTTPException(409, "This source is already in your library, in Trash. Restore it from Trash.")
         raise HTTPException(409, "This source is already in your reference list.")
     ref = db.add_reference(engine, pid, values)
+    if body.collection_id and db.get_collection(engine, pid, body.collection_id):
+        db.add_to_collection(engine, pid, body.collection_id, [ref["id"]])
+        ref = db.get_reference(engine, pid, ref["id"])
     db.log(engine, pid, "user", "REFERENCE_APPROVED",
            {"reference_id": ref["id"], "doi": ref["doi"], "label": ref["label"], "title": ref["title"][:200],
             "retraction": ref["retraction"].get("status")})
@@ -239,21 +248,233 @@ def approve_reference(body: CheckIn, pid: str = Path(pattern=ID)):
 
 
 @app.get("/api/projects/{pid}/references")
-def references(pid: str = Path(pattern=ID)):
+def references(pid: str = Path(pattern=ID), include_trash: bool = Query(default=False)):
     engine = require_db()
     require_project(engine, pid)
-    return db.list_references(engine, pid)
+    return db.list_references(engine, pid, include_trash=include_trash)
+
+
+def require_reference(engine, pid: str, rid: str) -> dict:
+    ref = db.get_reference(engine, pid, rid)
+    if not ref:
+        raise HTTPException(404, "Reference not found.")
+    return ref
 
 
 @app.delete("/api/projects/{pid}/references/{rid}")
-def remove_reference(pid: str = Path(pattern=ID), rid: str = Path(pattern=ID)):
+def remove_reference(pid: str = Path(pattern=ID), rid: str = Path(pattern=ID),
+                     permanent: bool = Query(default=False)):
+    """Moves a reference to Trash. With permanent=true, deletes a reference that is
+    already in Trash for good."""
     engine = require_db()
     require_project(engine, pid)
-    ref = db.get_reference(engine, pid, rid)
-    if not ref or not db.delete_reference(engine, pid, rid):
-        raise HTTPException(404, "Reference not found.")
+    ref = require_reference(engine, pid, rid)
+    if permanent:
+        if not ref.get("deleted_at"):
+            raise HTTPException(409, "Move the reference to Trash first, then delete it from Trash.")
+        db.delete_references(engine, pid, [rid])
+        db.log(engine, pid, "user", "REFERENCE_DELETED", {"reference_id": rid, "title": ref["title"][:200]})
+        return {"removed": rid, "permanent": True}
+    db.set_reference_fields(engine, pid, [rid], deleted_at=db.utcnow())
     db.log(engine, pid, "user", "REFERENCE_REMOVED", {"reference_id": rid, "title": ref["title"][:200]})
-    return {"removed": rid}
+    return {"removed": rid, "permanent": False}
+
+
+class ReferencePatch(BaseModel):
+    favorite: Optional[bool] = None
+    read: Optional[bool] = None
+    notes: Optional[str] = Field(default=None, max_length=20000)
+    trashed: Optional[bool] = None
+
+
+@app.patch("/api/projects/{pid}/references/{rid}")
+def patch_reference(body: ReferencePatch, pid: str = Path(pattern=ID), rid: str = Path(pattern=ID)):
+    """Library state only (favourite, read, notes, trash/restore). The trust label and
+    the record itself can only change through a live re-check."""
+    engine = require_db()
+    require_project(engine, pid)
+    ref = require_reference(engine, pid, rid)
+    values: dict = {}
+    if body.favorite is not None:
+        values["favorite"] = body.favorite
+    if body.read is not None:
+        values["read_at"] = db.utcnow() if body.read else None
+    if body.notes is not None:
+        values["notes"] = body.notes
+    if body.trashed is not None:
+        values["deleted_at"] = db.utcnow() if body.trashed else None
+    db.set_reference_fields(engine, pid, [rid], **values)
+    if body.trashed is not None and bool(ref.get("deleted_at")) != body.trashed:
+        db.log(engine, pid, "user", "REFERENCE_REMOVED" if body.trashed else "REFERENCE_RESTORED",
+               {"reference_id": rid, "title": ref["title"][:200]})
+    return db.get_reference(engine, pid, rid)
+
+
+BULK_ACTIONS = Literal["favorite", "unfavorite", "mark_read", "mark_unread", "trash", "restore",
+                       "delete_forever", "add_to_collection", "remove_from_collection"]
+
+
+class BulkIn(BaseModel):
+    ids: list[str] = Field(min_length=1, max_length=500)
+    action: BULK_ACTIONS
+    collection_id: Optional[str] = Field(default=None, pattern=ID)
+
+
+@app.post("/api/projects/{pid}/references/bulk")
+def bulk_references(body: BulkIn, pid: str = Path(pattern=ID)):
+    engine = require_db()
+    require_project(engine, pid)
+    if any(not re.fullmatch(r"[0-9a-f]{32}", i) for i in body.ids):
+        raise HTTPException(422, "Invalid reference id.")
+    refs = db.get_references(engine, pid, list(dict.fromkeys(body.ids)))
+    ids = [r["id"] for r in refs]
+    if not ids:
+        raise HTTPException(404, "None of these references were found.")
+    a = body.action
+    now = db.utcnow()
+    if a in ("add_to_collection", "remove_from_collection"):
+        if not body.collection_id or not db.get_collection(engine, pid, body.collection_id):
+            raise HTTPException(404, "Collection not found.")
+        if a == "add_to_collection":
+            changed = db.add_to_collection(engine, pid, body.collection_id, ids)
+        else:
+            changed = db.remove_from_collection(engine, pid, body.collection_id, ids)
+    elif a == "delete_forever":
+        trashed = [r["id"] for r in refs if r.get("deleted_at")]
+        if len(trashed) != len(ids):
+            raise HTTPException(409, "Only references in Trash can be deleted for good.")
+        changed = db.delete_references(engine, pid, trashed)
+    else:
+        values = {"favorite": {"favorite": True}, "unfavorite": {"favorite": False},
+                  "mark_read": {"read_at": now}, "mark_unread": {"read_at": None},
+                  "trash": {"deleted_at": now}, "restore": {"deleted_at": None}}[a]
+        changed = db.set_reference_fields(engine, pid, ids, **values)
+    if a in ("trash", "restore", "delete_forever", "add_to_collection", "remove_from_collection"):
+        db.log(engine, pid, "user", f"BULK_{a.upper()}",
+               {"count": len(ids), "collection_id": body.collection_id})
+    return {"action": a, "count": changed, "ids": ids}
+
+
+# ------------------------------------------------------------------ collections
+class CollectionIn(BaseModel):
+    name: str = Field(min_length=1, max_length=120)
+    parent_id: Optional[str] = Field(default=None, pattern=ID)
+
+
+class CollectionPatch(BaseModel):
+    name: Optional[str] = Field(default=None, min_length=1, max_length=120)
+    parent_id: Optional[str] = Field(default=None, pattern=ID)
+    move_to_top: bool = False
+
+
+@app.get("/api/projects/{pid}/collections")
+def get_collections(pid: str = Path(pattern=ID)):
+    engine = require_db()
+    require_project(engine, pid)
+    return db.list_collections(engine, pid)
+
+
+@app.post("/api/projects/{pid}/collections", status_code=201)
+def create_collection(body: CollectionIn, pid: str = Path(pattern=ID)):
+    engine = require_db()
+    require_project(engine, pid)
+    name = body.name.strip()
+    if not name:
+        raise HTTPException(422, "Give the collection a name.")
+    if body.parent_id and not db.get_collection(engine, pid, body.parent_id):
+        raise HTTPException(404, "Parent collection not found.")
+    siblings = [c for c in db.list_collections(engine, pid) if c["parent_id"] == body.parent_id]
+    if any(c["name"].lower() == name.lower() for c in siblings):
+        raise HTTPException(409, "A collection with this name already exists here.")
+    col = db.create_collection(engine, pid, name, body.parent_id)
+    db.log(engine, pid, "user", "COLLECTION_CREATED", {"collection_id": col["id"], "name": name})
+    return col
+
+
+def _descendants(cols: list[dict], cid: str) -> list[str]:
+    out, frontier = [], [cid]
+    while frontier:
+        nxt = [c["id"] for c in cols if c["parent_id"] in frontier]
+        out.extend(nxt)
+        frontier = nxt
+    return out
+
+
+@app.patch("/api/projects/{pid}/collections/{cid}")
+def patch_collection(body: CollectionPatch, pid: str = Path(pattern=ID), cid: str = Path(pattern=ID)):
+    engine = require_db()
+    require_project(engine, pid)
+    col = db.get_collection(engine, pid, cid)
+    if not col:
+        raise HTTPException(404, "Collection not found.")
+    values: dict = {}
+    if body.name is not None:
+        values["name"] = body.name.strip()
+    if body.move_to_top:
+        values["parent_id"] = None
+    elif body.parent_id is not None:
+        cols = db.list_collections(engine, pid)
+        if body.parent_id == cid or body.parent_id in _descendants(cols, cid):
+            raise HTTPException(409, "A collection cannot be moved inside itself.")
+        if not db.get_collection(engine, pid, body.parent_id):
+            raise HTTPException(404, "Parent collection not found.")
+        values["parent_id"] = body.parent_id
+    updated = db.update_collection(engine, pid, cid, **values)
+    db.log(engine, pid, "user", "COLLECTION_UPDATED", {"collection_id": cid, "name": updated["name"]})
+    return updated
+
+
+@app.delete("/api/projects/{pid}/collections/{cid}")
+def delete_collection(pid: str = Path(pattern=ID), cid: str = Path(pattern=ID)):
+    """Deletes the collection and its sub-collections. The references stay in the library."""
+    engine = require_db()
+    require_project(engine, pid)
+    col = db.get_collection(engine, pid, cid)
+    if not col:
+        raise HTTPException(404, "Collection not found.")
+    ids = [cid] + _descendants(db.list_collections(engine, pid), cid)
+    db.delete_collections(engine, pid, ids)
+    db.log(engine, pid, "user", "COLLECTION_DELETED", {"collection_id": cid, "name": col["name"], "count": len(ids)})
+    return {"deleted": ids}
+
+
+# ------------------------------------------------------------------ duplicates
+@app.get("/api/projects/{pid}/duplicates")
+def duplicates(pid: str = Path(pattern=ID)):
+    engine = require_db()
+    require_project(engine, pid)
+    groups = library.duplicate_groups(db.list_references(engine, pid))
+    return {"groups": [[r["id"] for r in g] for g in groups], "rule": library.__doc__.split("\n\n")[1].strip()}
+
+
+class MergeIn(BaseModel):
+    keep_id: str = Field(pattern=ID)
+    remove_ids: list[str] = Field(min_length=1, max_length=50)
+
+
+@app.post("/api/projects/{pid}/duplicates/merge")
+def merge_duplicates(body: MergeIn, pid: str = Path(pattern=ID)):
+    """Keeps one reference; the others move to Trash (so the merge can be undone).
+    Collections, favourite and notes are carried over to the kept reference."""
+    engine = require_db()
+    require_project(engine, pid)
+    if body.keep_id in body.remove_ids or any(not re.fullmatch(r"[0-9a-f]{32}", i) for i in body.remove_ids):
+        raise HTTPException(422, "Invalid merge request.")
+    keep = require_reference(engine, pid, body.keep_id)
+    others = db.get_references(engine, pid, body.remove_ids)
+    if len(others) != len(set(body.remove_ids)) or keep.get("deleted_at") or any(o.get("deleted_at") for o in others):
+        raise HTTPException(404, "Some of these references were not found in the library.")
+    for o in others:
+        for cid in o["collection_ids"]:
+            db.add_to_collection(engine, pid, cid, [keep["id"]])
+    notes = [keep["notes"]] + [f"[Merged from: {o['title'][:120]}]\n{o['notes']}" for o in others if o["notes"]]
+    db.set_reference_fields(engine, pid, [keep["id"]],
+                            favorite=keep["favorite"] or any(o["favorite"] for o in others),
+                            notes="\n\n".join(n for n in notes if n).strip())
+    db.set_reference_fields(engine, pid, [o["id"] for o in others], deleted_at=db.utcnow())
+    db.log(engine, pid, "user", "REFERENCES_MERGED",
+           {"kept": keep["id"], "moved_to_trash": [o["id"] for o in others], "count": len(others)})
+    return db.get_reference(engine, pid, keep["id"])
 
 
 @app.post("/api/projects/{pid}/references/{rid}/recheck")
@@ -333,7 +554,7 @@ def summary(pid: str = Path(pattern=ID)):
                        NOT_YET_VERIFIED: sum(1 for r in refs if r["label"] == NOT_YET_VERIFIED),
                        NOT_FOUND: sum(1 for r in refs if r["label"] == NOT_FOUND)},
         "approvals": sum(1 for e in events if e["event"] == "REFERENCE_APPROVED"),
-        "exports": sum(1 for e in events if e["event"].startswith("EXPORT_APA")),
+        "exports": sum(1 for e in events if e["event"].startswith("EXPORT_")),
         "ai_runs": sum(1 for e in events if e["actor"] == "ai"),
         "first_activity": events[0]["ts"] if events else None,
         "last_activity": events[-1]["ts"] if events else None,
