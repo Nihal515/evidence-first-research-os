@@ -118,6 +118,28 @@ def test_unknown_provider_is_reported_without_calling_anyone(monkeypatch):
     assert calls == []
 
 
+@pytest.mark.parametrize("with_key", [True, False])
+def test_a_key_pasted_into_llm_provider_is_never_echoed(monkeypatch, with_key):
+    pasted = "AQ.TESTONLY_Pasted-Into_Provider_box_123"
+    monkeypatch.setenv("LLM_PROVIDER", pasted)
+    if with_key:
+        monkeypatch.setenv("LLM_API_KEY", GROQ_KEY)
+    out = run(provider_router())
+    text = json.dumps(out).lower()
+    assert "testonly" not in text and "pasted" not in text
+    assert out["llm"]["provider"] is None
+    if with_key:
+        assert out["llm"]["status"] == "invalid" and "looks like an API key" in out["llm"]["detail"]
+
+
+def test_swapped_provider_and_key_are_detected(monkeypatch):
+    monkeypatch.setenv("LLM_PROVIDER", GEMINI_KEY)
+    monkeypatch.setenv("LLM_API_KEY", "gemini")
+    out = run(provider_router())
+    assert out["llm"]["status"] == "invalid" and "swapped" in out["llm"]["detail"]
+    assert "testonly" not in json.dumps(out).lower()
+
+
 def test_gemini_rejects_bad_key_with_400(monkeypatch):
     monkeypatch.setenv("LLM_API_KEY", GEMINI_KEY)
     monkeypatch.setenv("LLM_PROVIDER", "gemini")

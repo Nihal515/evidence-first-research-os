@@ -76,7 +76,7 @@ def _key_shape_hint(provider: str, key: str) -> str:
     if provider == "groq":
         if key.startswith("xai-"):
             return " This looks like an xAI (Grok, with a K) key. Groq keys come from console.groq.com and usually start with gsk_."
-        if key.startswith("AIza"):
+        if key.startswith(("AIza", "AQ.")):
             return " This looks like a Google Gemini key. Set LLM_PROVIDER to gemini, or use a Groq key from console.groq.com."
     if provider == "gemini":
         if key.startswith("gsk_"):
@@ -107,13 +107,30 @@ def _check_llm_key(client: httpx.Client, provider: str, key: str) -> dict:
     return _result("unavailable", f"{name} gave an unexpected answer (HTTP {r.status_code}).", provider=provider)
 
 
+def _looks_like_a_key(value: str) -> bool:
+    return len(value) > 12 or any(ch in value for ch in "._-/")
+
+
 def check_llm(client: httpx.Client) -> dict:
-    provider = _env("LLM_PROVIDER").lower()
+    raw_provider = _env("LLM_PROVIDER")
+    provider = raw_provider.lower()
+    # Only ever echo the provider when it is one of the two allowed words: a
+    # wrong value may be a pasted secret, so it is never returned.
+    safe_provider = provider if provider in LLM_PROVIDERS else None
     key = _env("LLM_API_KEY")
     if not key:
-        return _result("not_configured", "No LLM_API_KEY is saved yet.", provider=provider or None)
-    if provider not in LLM_PROVIDERS:
-        return _result("invalid", "LLM_PROVIDER must be groq or gemini (small letters).", provider=provider or None)
+        return _result("not_configured", "No LLM_API_KEY is saved yet.", provider=safe_provider)
+    if key.lower() in LLM_PROVIDERS:
+        return _result("invalid", f"LLM_API_KEY holds the word '{key.lower()}' instead of a key. The two values "
+                                  "look swapped: LLM_PROVIDER should be the word, LLM_API_KEY the key.",
+                       provider=safe_provider)
+    if safe_provider is None:
+        if raw_provider and _looks_like_a_key(raw_provider):
+            detail = ("LLM_PROVIDER holds something that looks like an API key. It should be just the word "
+                      "groq or gemini; the key itself belongs in LLM_API_KEY.")
+        else:
+            detail = "LLM_PROVIDER must be groq or gemini (small letters)."
+        return _result("invalid", detail, provider=None)
     return _check_llm_key(client, provider, key)
 
 
