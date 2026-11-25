@@ -32,6 +32,8 @@ def provider_router(openalex=200, groq=200, gemini=200, budget=1):
             return httpx.Response(openalex, json=body)
         if host == "api.groq.com":
             return httpx.Response(groq, json={"data": []} if groq == 200 else {"error": {"code": "invalid_api_key"}})
+        if host == "auth.example.test":
+            return httpx.Response(200, json={"keys": [{"kty": "OKP", "kid": "k"}]})
         if host == "generativelanguage.googleapis.com":
             return httpx.Response(gemini, json={"models": []} if gemini == 200 else {"error": {"code": gemini}})
         raise AssertionError(f"unexpected host {host}")
@@ -40,7 +42,7 @@ def provider_router(openalex=200, groq=200, gemini=200, budget=1):
 
 @pytest.fixture(autouse=True)
 def clean_env(monkeypatch):
-    for name in ("OPENALEX_API_KEY", "LLM_API_KEY", "LLM_PROVIDER", "GEMINI_API_KEY"):
+    for name in ("OPENALEX_API_KEY", "LLM_API_KEY", "LLM_PROVIDER", "GEMINI_API_KEY", "NEON_AUTH_BASE_URL", "VITE_NEON_AUTH_URL"):
         monkeypatch.delenv(name, raising=False)
     keycheck._cache.update(at=0.0, result=None)
 
@@ -187,3 +189,11 @@ def test_keys_endpoint(monkeypatch, tmp_path):
     body = TestClient(app_module.app).get("/api/health/keys").json()
     assert body["llm"]["status"] == "valid" and body["openalex"]["status"] == "not_configured"
     assert GROQ_KEY not in json.dumps(body)
+
+
+
+def test_sign_in_service_check(monkeypatch):
+    assert run(provider_router())["sign_in"]["status"] == "not_configured"
+    monkeypatch.setenv("NEON_AUTH_BASE_URL", "https://auth.example.test/neondb/auth")
+    out = run(provider_router())["sign_in"]
+    assert out["status"] == "valid" and "1 signing key" in out["detail"]

@@ -1,10 +1,12 @@
-import { FolderCog, Library, Quote, ShieldCheck, X } from "lucide-react";
+import { CircleUser, FolderCog, Library, LogIn, LogOut, Quote, ShieldCheck, X } from "lucide-react";
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { api, ApiError } from "./api";
+import { api, ApiError, type Me } from "./api";
+import { onAuthChange, restoreSession, signOut } from "./auth";
 import { AddDialog } from "./components/AddDialog";
 import { DetailPanel } from "./components/DetailPanel";
 import { DuplicatesView } from "./components/DuplicatesView";
 import { LibraryView } from "./components/LibraryView";
+import { LoginPage } from "./components/LoginPage";
 import { ProjectPanel } from "./components/ProjectPanel";
 import { ReferenceListView } from "./components/ReferenceListView";
 import { Sidebar } from "./components/Sidebar";
@@ -63,6 +65,12 @@ export default function App() {
   const [dbState, setDbState] = useState("checking");
   const [error, setError] = useState("");
   const [refreshKey, setRefreshKey] = useState(0);
+  const [account, setAccount] = useState<Me["user"]>(null);
+  const [authConfigured, setAuthConfigured] = useState(false);
+  const [showLogin, setShowLogin] = useState(false);
+  const [claimOffer, setClaimOffer] = useState(false);
+  const [accountMenu, setAccountMenu] = useState(false);
+  const [accountProjects, setAccountProjects] = useState<Project[]>([]);
 
   const reload = useCallback(async (pid: string) => {
     try {
@@ -77,27 +85,98 @@ export default function App() {
     setRefreshKey((k) => k + 1);
   }, []);
 
-  useEffect(() => {
-    api.health().then((h) => setDbState(h.database)).catch(() => setDbState("error"));
-    const id = storedId();
-    if (!id) {
-      setLoading(false);
-      return;
+  const openProject = useCallback(async (p: Project) => {
+    setProject(p);
+    storeId(p.id);
+    if (!p.owned) rememberProject(p);
+    await reload(p.id);
+  }, [reload]);
+
+  /** Who is signed in, and which project to show. */
+  const resolve = useCallback(async () => {
+    let me: Me | null = null;
+    try {
+      me = await api.me();
+    } catch {
+      me = null;
     }
-    api.getProject(id)
-      .then((p) => {
-        setProject(p);
-        rememberProject(p);
-        return reload(p.id);
-      })
-      .catch((err) => {
+    setAccount(me?.user ?? null);
+    setAuthConfigured(Boolean(me?.auth_configured));
+    if (me?.user) setAccountProjects(await api.myProjects().catch(() => []));
+    const id = storedId();
+    if (id) {
+      try {
+        await openProject(await api.getProject(id));
+        return;
+      } catch (err) {
         if (err instanceof ApiError && err.status === 404) {
           storeId(null);
           forgetProject(id);
-        } else setError(err instanceof ApiError ? err.message : "Could not load your project.");
-      })
+        } else {
+          setError(err instanceof ApiError ? err.message : "Could not load your project.");
+          return;
+        }
+      }
+    }
+    if (me?.user) {
+      const mine = await api.myProjects().catch(() => [] as Project[]);
+      if (mine.length) await openProject(mine[0]);
+    }
+  }, [openProject]);
+
+  useEffect(() => {
+    api.health().then((h) => setDbState(h.database)).catch(() => setDbState("error"));
+    restoreSession()
+      .catch(() => false)
+      .then(() => resolve())
       .finally(() => setLoading(false));
-  }, [reload]);
+    // if the session ends (signed out elsewhere, expired), fall back to guest mode
+    return onAuthChange(() => {
+      api.me().then((me) => setAccount(me.user)).catch(() => setAccount(null));
+    });
+  }, [resolve]);
+
+  async function afterSignIn() {
+    setShowLogin(false);
+    setAccountMenu(false);
+    setPage("library");
+    const me = await api.me().catch(() => null);
+    setAccount(me?.user ?? null);
+    setAccountProjects(await api.myProjects().catch(() => []));
+    if (project && !project.owned) setClaimOffer(true); // offer to save the guest library to the account
+    else if (!project) await resolve();
+  }
+
+  async function doSignOut() {
+    setAccountMenu(false);
+    await signOut().catch(() => undefined);
+    setAccount(null);
+    setAccountProjects([]);
+    setClaimOffer(false);
+    if (project?.owned) {
+      // an account's library is private: leave it when signing out
+      storeId(null);
+      setProject(null);
+      setRefs([]);
+      setCollections([]);
+      setActiveId(null);
+      setPage("library");
+    }
+  }
+
+  async function claim() {
+    if (!project) return;
+    try {
+      const p = await api.claim(project.id);
+      setProject(p);
+      forgetProject(p.id);
+      setClaimOffer(false);
+      setAccountProjects(await api.myProjects().catch(() => []));
+      setExportMessage({ ok: true, message: `“${p.title}” is now saved to your account.` });
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : "Could not save the library to your account.");
+    }
+  }
 
   // close the detail panel with Escape (desktop)
   useEffect(() => {
@@ -120,7 +199,8 @@ export default function App() {
     const isNew = !project || project.id !== p.id;
     setProject(p);
     storeId(p.id);
-    rememberProject(p);
+    if (!p.owned) rememberProject(p);
+    if (account) api.myProjects().then(setAccountProjects).catch(() => undefined);
     if (isNew) {
       setRefs([]);
       setCollections([]);
@@ -238,25 +318,45 @@ export default function App() {
   // ---------------------------------------------------------------- start screen
   if (loading) return <p className="empty boot">Loading…</p>;
 
+  if (showLogin) {
+    return <LoginPage configured={authConfigured} onDone={afterSignIn} onGuest={() => setShowLogin(false)} />;
+  }
+
   if (!project) {
     const others = storedProjects();
     return (
       <div className="welcome">
-        <div className="welcome-brand">
-          <span className="brand-mark" aria-hidden="true">EF</span>
-          <div>
-            <h1>Evidence-First Research OS</h1>
-            <p className="tagline">Find, check, organise and cite sources honestly</p>
+        <div className="welcome-top">
+          <div className="welcome-brand">
+            <span className="brand-mark" aria-hidden="true">EF</span>
+            <div>
+              <h1>Evidence-First Research OS</h1>
+              <p className="tagline">Find, check, organise and cite sources honestly</p>
+            </div>
           </div>
+          {account ? (
+            <button className="btn-ghost btn-sm" onClick={doSignOut} title={account.email}><LogOut size={14} /> Sign out</button>
+          ) : (
+            <button className="btn-secondary btn-sm" onClick={() => setShowLogin(true)}><LogIn size={14} /> Sign in</button>
+          )}
         </div>
+        {account && <p className="notice notice-ok" role="status">Signed in as {account.email}. New projects are saved to your account.</p>}
         {dbState !== "connected" && dbState !== "checking" && (
           <div className="notice notice-warn" role="alert">The database is not connected, so projects cannot be saved yet.</div>
         )}
         {error && <div className="notice notice-warn" role="alert">{error}</div>}
         <ProjectPanel project={null} onProject={onProject} onNewProject={newProject} />
+        {accountProjects.length > 0 && (
+          <section className="panel">
+            <h3>Your account’s projects</h3>
+            <ul className="project-list">
+              {accountProjects.map((x) => <li key={x.id}><button className="btn-ghost" onClick={() => switchProject(x.id)}>{x.title}</button></li>)}
+            </ul>
+          </section>
+        )}
         {others.length > 0 && (
           <section className="panel">
-            <h3>Your projects on this device</h3>
+            <h3>Guest projects on this device</h3>
             <ul className="project-list">
               {others.map((x) => <li key={x.id}><button className="btn-ghost" onClick={() => switchProject(x.id)}>{x.title}</button></li>)}
             </ul>
@@ -298,6 +398,19 @@ export default function App() {
               <Icon size={22} aria-hidden="true" />
             </button>
           ))}
+          <div className="rail-account">
+            <button className={`rail-btn${account ? " rail-signed" : ""}`} onClick={() => (account ? setAccountMenu(!accountMenu) : setShowLogin(true))}
+              title={account ? `Signed in as ${account.email}` : "Sign in"} aria-label={account ? "Account" : "Sign in"} aria-expanded={account ? accountMenu : undefined}>
+              {account ? <span className="avatar">{(account.name || account.email).slice(0, 1).toUpperCase()}</span> : <LogIn size={22} aria-hidden="true" />}
+            </button>
+            {account && accountMenu && (
+              <div className="menu account-menu" role="menu">
+                <p className="menu-note">Signed in as<br /><b>{account.email}</b></p>
+                <button className="menu-item" role="menuitem" onClick={() => { setAccountMenu(false); setPage("project"); }}>Your projects</button>
+                <button className="menu-item" role="menuitem" onClick={doSignOut}><LogOut size={14} /> Sign out</button>
+              </div>
+            )}
+          </div>
         </nav>
       )}
 
@@ -315,6 +428,19 @@ export default function App() {
             <button className="btn-ghost btn-sm" onClick={() => reload(project.id)}>Try again</button>
           </div>
         )}
+        {page !== "library" && exportMessage && (
+          <div className={`notice ${exportMessage.ok ? "notice-ok" : "notice-warn"}`} role="status">
+            {exportMessage.message}
+            <button className="icon-btn" aria-label="Dismiss" onClick={() => setExportMessage(null)}><X size={14} /></button>
+          </div>
+        )}
+        {claimOffer && project && !project.owned && account && (
+          <div className="notice notice-ok confirm-bar" role="status">
+            <span>Signed in as <b>{account.email}</b>. Save “{project.title}” to your account, so it is private and on all your devices?</span>
+            <button className="btn-primary btn-sm" onClick={claim}>Save to my account</button>
+            <button className="btn-ghost btn-sm" onClick={() => setClaimOffer(false)}>Not now</button>
+          </div>
+        )}
         {pendingDelete && (
           <div className="notice notice-warn confirm-bar" role="alertdialog" aria-label="Delete collection">
             <span>Delete the collection <b>{pendingDelete.name}</b> and its sub-collections? The references stay in your library.</span>
@@ -328,10 +454,38 @@ export default function App() {
         {page === "statement" && <div className="page"><StatementPanel projectId={project.id} refreshKey={refreshKey} /></div>}
         {page === "project" && (
           <div className="page">
+            <section className="panel account-panel">
+              <h3><CircleUser size={18} aria-hidden="true" /> Account</h3>
+              {account ? (
+                <>
+                  <p className="hint">Signed in as <b>{account.email}</b>.{" "}
+                    {project.owned_by_you ? "This project is saved to your account." : "This project is a guest project on this device."}</p>
+                  <div className="actions">
+                    {!project.owned && <button className="btn-primary btn-sm" onClick={claim}>Save this project to my account</button>}
+                    <button className="btn-ghost btn-sm" onClick={doSignOut}><LogOut size={14} /> Sign out</button>
+                  </div>
+                  {accountProjects.filter((x) => x.id !== project.id).length > 0 && (
+                    <>
+                      <p className="sub-title">Your account’s other projects</p>
+                      <ul className="project-list">
+                        {accountProjects.filter((x) => x.id !== project.id).map((x) => (
+                          <li key={x.id}><button className="btn-ghost" onClick={() => switchProject(x.id)}>{x.title}</button></li>
+                        ))}
+                      </ul>
+                    </>
+                  )}
+                </>
+              ) : (
+                <>
+                  <p className="hint">You are using a guest library on this device. Sign in to keep it private and use it on every device.</p>
+                  <div className="actions"><button className="btn-secondary btn-sm" onClick={() => setShowLogin(true)}><LogIn size={14} /> Sign in or create an account</button></div>
+                </>
+              )}
+            </section>
             <ProjectPanel key={project.id} project={project} onProject={onProject} onNewProject={newProject} />
             {storedProjects().filter((x) => x.id !== project.id).length > 0 && (
               <section className="panel">
-                <h3>Other projects on this device</h3>
+                <h3>Guest projects on this device</h3>
                 <ul className="project-list">
                   {storedProjects().filter((x) => x.id !== project.id).map((x) => (
                     <li key={x.id}><button className="btn-ghost" onClick={() => switchProject(x.id)}>{x.title}</button></li>

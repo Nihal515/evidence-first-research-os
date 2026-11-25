@@ -1,3 +1,4 @@
+import { getToken } from "./auth";
 import type {
   AuditEvent,
   BulkAction,
@@ -22,14 +23,19 @@ export class ApiError extends Error {
 
 const TIMEOUT_MS = 28000; // just under the server's 30 s limit
 
-async function fetchOnce(path: string, init?: RequestInit): Promise<Response> {
+async function fetchOnce(path: string, init?: RequestInit, forceToken = false): Promise<Response> {
   const ctrl = new AbortController();
   const timer = setTimeout(() => ctrl.abort(), TIMEOUT_MS);
+  const token = await getToken(forceToken); // null for guests
   try {
     return await fetch(path, {
       ...init,
       signal: ctrl.signal,
-      headers: { "Content-Type": "application/json", ...(init?.headers || {}) },
+      headers: {
+        "Content-Type": "application/json",
+        ...(token ? { Authorization: `Bearer ${token}` } : {}),
+        ...(init?.headers || {}),
+      },
     });
   } finally {
     clearTimeout(timer);
@@ -43,6 +49,10 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
   for (let attempt = 0; attempt < (retryable ? 2 : 1); attempt++) {
     try {
       res = await fetchOnce(path, init);
+      if (res.status === 401 && attempt === 0) {
+        // the sign-in token expired: refresh it once from the session and repeat the request
+        res = await fetchOnce(path, init, true);
+      }
       if (retryable && attempt === 0 && [502, 503, 504].includes(res.status)) {
         await new Promise((r) => setTimeout(r, 800));
         continue;
@@ -79,7 +89,16 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
 
 const json = (data: unknown): RequestInit => ({ method: "POST", body: JSON.stringify(data) });
 
+export interface Me {
+  signed_in: boolean;
+  user: { id: string; email: string; name: string; email_verified: boolean } | null;
+  auth_configured: boolean;
+}
+
 export const api = {
+  me: () => request<Me>("/api/me"),
+  myProjects: () => request<Project[]>("/api/me/projects"),
+  claim: (id: string) => request<Project>(`/api/projects/${id}/claim`, { method: "POST" }),
   health: () => request<{ database: string; llm: string }>("/api/health"),
   createProject: (title: string, question: string) => request<Project>("/api/projects", json({ title, question })),
   getProject: (id: string) => request<Project>(`/api/projects/${id}`),

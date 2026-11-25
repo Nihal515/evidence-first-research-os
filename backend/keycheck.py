@@ -141,6 +141,25 @@ def check_llm_backup(client: httpx.Client) -> dict:
     return _check_llm_key(client, "gemini", key)
 
 
+def check_auth(client: httpx.Client) -> dict:
+    """Sign-in service: reachable, and publishing the public keys used to verify tokens."""
+    base = (os.getenv("NEON_AUTH_BASE_URL") or os.getenv("VITE_NEON_AUTH_URL") or "").strip().rstrip("/")
+    if not base:
+        return _result("not_configured", "Neon Auth is not connected (NEON_AUTH_BASE_URL is missing).")
+    r = _call(client, f"{base}/.well-known/jwks.json")
+    if r is None or r.status_code >= 500:
+        return _result("unavailable", "Neon Auth could not be reached right now.")
+    if r.status_code != 200:
+        return _result("invalid", f"Neon Auth answered HTTP {r.status_code} for its signing keys. Check that Auth is enabled in Neon.")
+    try:
+        n = len([k for k in r.json().get("keys", []) if isinstance(k, dict)])
+    except ValueError:
+        n = 0
+    if not n:
+        return _result("invalid", "Neon Auth published no signing keys. Check that Auth is enabled in Neon.")
+    return _result("valid", f"Neon Auth is reachable and publishes {n} signing key{'s' if n != 1 else ''}.")
+
+
 def check_all(make_client: Callable[[], httpx.Client], *, use_cache: bool = True) -> dict:
     now = time.monotonic()
     if use_cache and _cache["result"] is not None and now - _cache["at"] < CACHE_SECONDS:
@@ -151,6 +170,7 @@ def check_all(make_client: Callable[[], httpx.Client], *, use_cache: bool = True
             "openalex": check_openalex(client),
             "llm": check_llm(client),
             "llm_backup": check_llm_backup(client),
+            "sign_in": check_auth(client),
         }
     _cache.update(at=now, result=result)
     return result

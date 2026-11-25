@@ -6,6 +6,8 @@ export interface Project {
   question: string;
   created_at: string;
   updated_at: string;
+  owned?: boolean;         // saved to an account
+  owned_by_you?: boolean;  // saved to the signed-in account
 }
 
 export interface RecordSummary {

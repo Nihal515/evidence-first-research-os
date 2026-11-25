@@ -8,10 +8,11 @@ import re
 import time
 from typing import Literal, Optional
 
-from fastapi import FastAPI, HTTPException, Path, Query
+from fastapi import FastAPI, HTTPException, Path, Query, Request
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 
+from . import auth
 from . import db
 from . import keycheck
 from . import library
@@ -26,6 +27,18 @@ app = FastAPI(title="Evidence-First Research OS API", version="1.0.0-stage1")
 ID = r"^[0-9a-f]{32}$"
 CLIENT_EVENTS = {"EXPORT_APA_COPIED", "EXPORT_APA_DOWNLOADED", "EXPORT_BIBTEX_DOWNLOADED", "EXPORT_RIS_DOWNLOADED",
                  "STATEMENT_COPIED", "STATEMENT_DOWNLOADED"}
+
+
+app.middleware("http")(auth.identity_middleware)
+
+
+def public_project(project: dict) -> dict:
+    """Never send an owner id to the browser; say only whether it is yours."""
+    user = auth.current_user.get()
+    out = {k: v for k, v in project.items() if k != "owner_id"}
+    out["owned"] = bool(project.get("owner_id"))
+    out["owned_by_you"] = bool(user and project.get("owner_id") == user["id"])
+    return out
 
 
 @app.exception_handler(Exception)
@@ -44,9 +57,17 @@ def require_db():
 
 
 def require_project(engine, pid: str) -> dict:
+    """A guest project (no owner) is reachable by its id, as before. A project that
+    belongs to an account is reachable only by that signed-in account; anyone else
+    gets "not found", so its existence is not revealed."""
     project = db.get_project(engine, pid)
     if not project:
         raise HTTPException(404, "Project not found.")
+    owner = project.get("owner_id")
+    if owner:
+        user = auth.current_user.get()
+        if not user or user["id"] != owner:
+            raise HTTPException(404, "Project not found.")
     return project
 
 
@@ -104,6 +125,7 @@ def health():
         "crossref_polite_pool": bool(os.getenv("CROSSREF_MAILTO")),
         "openalex_key": bool(os.getenv("OPENALEX_API_KEY")),
         "llm": "connected" if os.getenv("LLM_API_KEY") else "not_connected",
+        "auth": "configured" if auth.configured() else "not_configured",
     }
 
 
@@ -112,6 +134,45 @@ def health_keys():
     """Tests each saved API key with its provider (cached for 60 s).
     Reports only valid / invalid / not_configured / unavailable — never a key."""
     return keycheck.check_all(providers.make_client)
+
+
+# ------------------------------------------------------------------ accounts
+@app.api_route("/api/auth/{path:path}", methods=["GET", "POST", "PUT", "PATCH", "DELETE"], include_in_schema=False)
+async def auth_proxy(path: str, request: Request):
+    return await auth.proxy(request, path)
+
+
+@app.get("/api/me")
+def me():
+    user = auth.current_user.get()
+    return {"signed_in": bool(user), "user": user, "auth_configured": auth.configured()}
+
+
+def require_user() -> dict:
+    user = auth.current_user.get()
+    if not user:
+        raise HTTPException(401, "Please sign in first.")
+    return user
+
+
+@app.get("/api/me/projects")
+def my_projects():
+    user = require_user()
+    engine = require_db()
+    return [public_project(p) for p in db.list_owned_projects(engine, user["id"])]
+
+
+@app.post("/api/projects/{pid}/claim")
+def claim_project(pid: str = Path(pattern=ID)):
+    """Save a guest project to the signed-in account. Only a project with no owner can be claimed."""
+    user = require_user()
+    engine = require_db()
+    project = require_project(engine, pid)
+    if project.get("owner_id") and project["owner_id"] != user["id"]:
+        raise HTTPException(404, "Project not found.")
+    db.set_project_owner(engine, pid, user["id"])
+    db.log(engine, pid, "user", "PROJECT_SAVED_TO_ACCOUNT", {})
+    return public_project(db.get_project(engine, pid))
 
 
 @app.get("/api/labels")
@@ -123,20 +184,22 @@ def labels():
 @app.post("/api/projects", status_code=201)
 def create_project(body: ProjectIn):
     engine = require_db()
-    return db.create_project(engine, body.title.strip(), body.question.strip())
+    user = auth.current_user.get()
+    return public_project(db.create_project(engine, body.title.strip(), body.question.strip(),
+                                            owner_id=user["id"] if user else None))
 
 
 @app.get("/api/projects/{pid}")
 def get_project(pid: str = Path(pattern=ID)):
     engine = require_db()
-    return require_project(engine, pid)
+    return public_project(require_project(engine, pid))
 
 
 @app.put("/api/projects/{pid}")
 def edit_project(body: ProjectIn, pid: str = Path(pattern=ID)):
     engine = require_db()
     require_project(engine, pid)
-    return db.update_project(engine, pid, body.title.strip(), body.question.strip())
+    return public_project(db.update_project(engine, pid, body.title.strip(), body.question.strip()))
 
 
 # ------------------------------------------------------------------ search (nothing is saved)

@@ -45,6 +45,22 @@ dropped), serialised with a Postgres advisory lock so concurrent cold starts are
 record's title, first author and year must all appear in it. **Not found** means no match in the
 databases that were checked — it does not prove a work does not exist anywhere.
 
+## Accounts and sign-in
+
+Guests can use every feature; signing in keeps a library private and on every device.
+
+* **Login page** — sign in, create an account, or continue as a guest. After signing in, a guest library can be
+  saved to the account with one click.
+* **Neon Auth (managed Better Auth)** through a **same-origin proxy** at `/api/auth/*`: the session cookie is
+  re-issued for our own domain (first-party), so browsers that block third-party cookies (Safari on iPhone) keep
+  people signed in. The same approach as Neon's own Next.js SDK.
+* **API identity** — the browser sends Neon Auth's short-lived JWT; the server verifies the EdDSA signature against
+  Neon's JWKS, plus issuer, audience and expiry (algorithm confusion and `none` are rejected).
+* **Ownership** — a project saved to an account is visible only to that account; anyone else gets "not found".
+  The account id is never sent to the browser. Guest projects work exactly as before.
+* Needs `NEON_AUTH_BASE_URL` (set by the Neon integration) and the site's domain in Neon → Auth → Configuration →
+  Domains. `/api/health/keys` reports whether the sign-in service is reachable.
+
 ## Architecture
 
 * `src/` — React + TypeScript front end (Vite)
@@ -67,11 +83,15 @@ npm run dev                                                             # termin
 ## Tests
 
 ```bash
-python -m pytest tests -q                      # 84 offline tests (recorded provider responses)
+python -m pytest tests -q                      # 114 offline tests (recorded provider responses)
 RUN_LIVE=1 python -m pytest tests/test_live.py # 10 tests against the real Crossref / doi.org / OpenAlex
 npm test                                       # 22 tests: APA 7, AI-use statement, library views, BibTeX / RIS
 node tests/e2e/journey.cjs                     # browser journey, desktop + phone (needs Playwright; BASE=<site url>)
 python tests/e2e/live_api_check.py <site url>  # 32 live checks of the deployed API
+# sign-in journey against a local stand-in for Neon Auth (test accounts only):
+#   uvicorn tests.e2e.mock_neon_auth:app --port 8100
+#   NEON_AUTH_BASE_URL=http://127.0.0.1:8100/neondb/auth uvicorn backend.app:app --port 8000
+#   npm run build && npx vite preview --port 4173 ; node tests/e2e/auth_journey.cjs
 ```
 
 ## Environment variables (Vercel → Settings → Environment Variables)

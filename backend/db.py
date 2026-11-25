@@ -213,10 +213,11 @@ def iso(dt) -> Optional[str]:
 
 
 # ------------------------------------------------------------------ projects
-def create_project(engine: Engine, title: str, question: str) -> dict:
+def create_project(engine: Engine, title: str, question: str, owner_id: Optional[str] = None) -> dict:
     pid, now = new_id(), utcnow()
     with engine.begin() as conn:
-        conn.execute(insert(projects).values(id=pid, title=title, question=question, created_at=now, updated_at=now))
+        conn.execute(insert(projects).values(id=pid, title=title, question=question, created_at=now, updated_at=now,
+                                             owner_id=owner_id))
     log(engine, pid, "user", "PROJECT_CREATED", {"title": title})
     return get_project(engine, pid)
 
@@ -227,7 +228,21 @@ def get_project(engine: Engine, pid: str) -> Optional[dict]:
     if not row:
         return None
     return {"id": row["id"], "title": row["title"], "question": row["question"],
-            "created_at": iso(row["created_at"]), "updated_at": iso(row["updated_at"])}
+            "created_at": iso(row["created_at"]), "updated_at": iso(row["updated_at"]), "owner_id": row["owner_id"]}
+
+
+def list_owned_projects(engine: Engine, owner_id: str) -> list[dict]:
+    with engine.connect() as conn:
+        rows = conn.execute(select(projects).where(projects.c.owner_id == owner_id)
+                            .order_by(projects.c.updated_at.desc())).mappings().all()
+    return [{"id": r["id"], "title": r["title"], "question": r["question"], "created_at": iso(r["created_at"]),
+             "updated_at": iso(r["updated_at"]), "owner_id": r["owner_id"]} for r in rows]
+
+
+def set_project_owner(engine: Engine, pid: str, owner_id: str) -> None:
+    with engine.begin() as conn:
+        conn.execute(update(projects).where((projects.c.id == pid) & (projects.c.owner_id.is_(None)))
+                     .values(owner_id=owner_id, updated_at=utcnow()))
 
 
 def update_project(engine: Engine, pid: str, title: str, question: str) -> Optional[dict]:
