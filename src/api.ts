@@ -20,16 +20,43 @@ export class ApiError extends Error {
   }
 }
 
-async function request<T>(path: string, init?: RequestInit): Promise<T> {
-  let res: Response;
+const TIMEOUT_MS = 28000; // just under the server's 30 s limit
+
+async function fetchOnce(path: string, init?: RequestInit): Promise<Response> {
+  const ctrl = new AbortController();
+  const timer = setTimeout(() => ctrl.abort(), TIMEOUT_MS);
   try {
-    res = await fetch(path, {
+    return await fetch(path, {
       ...init,
+      signal: ctrl.signal,
       headers: { "Content-Type": "application/json", ...(init?.headers || {}) },
     });
-  } catch {
-    throw new ApiError("Could not reach the server. Check your connection and try again.", 0);
+  } finally {
+    clearTimeout(timer);
   }
+}
+
+async function request<T>(path: string, init?: RequestInit): Promise<T> {
+  const method = (init?.method || "GET").toUpperCase();
+  const retryable = method === "GET"; // reads are safe to repeat; writes are never retried automatically
+  let res: Response | null = null;
+  for (let attempt = 0; attempt < (retryable ? 2 : 1); attempt++) {
+    try {
+      res = await fetchOnce(path, init);
+      if (retryable && attempt === 0 && [502, 503, 504].includes(res.status)) {
+        await new Promise((r) => setTimeout(r, 800));
+        continue;
+      }
+      break;
+    } catch {
+      res = null;
+      if (retryable && attempt === 0) {
+        await new Promise((r) => setTimeout(r, 800));
+        continue;
+      }
+    }
+  }
+  if (!res) throw new ApiError("Could not reach the server. Check your connection and try again.", 0);
   let body: any = null;
   try {
     body = await res.json();
@@ -44,6 +71,7 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
     if (Array.isArray(detail)) {
       throw new ApiError("Please check the details you entered.", res.status);
     }
+    if (res.status === 504) throw new ApiError("The server took too long to answer. Please try again.", 504);
     throw new ApiError(typeof detail === "string" ? detail : `Request failed (${res.status}).`, res.status);
   }
   return body as T;
@@ -77,6 +105,9 @@ export const api = {
     request<Collection>(`/api/projects/${id}/collections/${cid}`, { method: "PATCH", body: JSON.stringify({ name }) }),
   deleteCollection: (id: string, cid: string) =>
     request<{ deleted: string[] }>(`/api/projects/${id}/collections/${cid}`, { method: "DELETE" }),
+  library: (id: string) =>
+    request<{ references: Reference[]; collections: Collection[]; duplicates: { groups: string[][]; rule: string } }>(
+      `/api/projects/${id}/library`),
   duplicates: (id: string) => request<{ groups: string[][]; rule: string }>(`/api/projects/${id}/duplicates`),
   merge: (id: string, keepId: string, removeIds: string[]) =>
     request<Reference>(`/api/projects/${id}/duplicates/merge`, json({ keep_id: keepId, remove_ids: removeIds })),

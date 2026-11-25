@@ -211,3 +211,26 @@ def test_new_export_events_are_counted(env):
     for ev in ("EXPORT_BIBTEX_DOWNLOADED", "EXPORT_RIS_DOWNLOADED"):
         assert api.post(f"/api/projects/{pid}/events", json={"event": ev, "detail": {"count": 1}}).status_code == 201
     assert api.get(f"/api/projects/{pid}/summary").json()["exports"] == 2
+
+
+def test_whole_library_in_one_request(env):
+    api, db = env
+    pid = project(api)
+    col = api.post(f"/api/projects/{pid}/collections", json={"name": "Neuro"}).json()
+    keep = seed(db, pid, "Attention is all you need", doi="10.1/a", authors=["Ashish Vaswani"], year=2017)
+    seed(db, pid, "Attention Is All You Need", label="not_yet_verified", authors=["Vaswani, A."], year=2017)
+    gone = seed(db, pid, "Binned", doi="10.1/b")
+    api.delete(f"/api/projects/{pid}/references/{gone['id']}")
+    body = api.get(f"/api/projects/{pid}/library").json()
+    assert len(body["references"]) == 3 and any(r["deleted_at"] for r in body["references"])
+    assert body["collections"] == [col]
+    assert body["duplicates"]["groups"][0][0] == keep["id"] and body["duplicates"]["rule"]
+
+
+def test_schema_check_is_skipped_when_current(env, monkeypatch):
+    api, db = env
+    engine = db.get_engine()
+    calls = []
+    monkeypatch.setattr(db, "_add_missing_columns", lambda conn: calls.append(1))
+    db._ensure_schema(engine)  # schema already current: no migration work
+    assert calls == []

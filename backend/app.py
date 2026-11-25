@@ -438,6 +438,20 @@ def delete_collection(pid: str = Path(pattern=ID), cid: str = Path(pattern=ID)):
     return {"deleted": ids}
 
 
+# ------------------------------------------------------------------ whole library in one request
+@app.get("/api/projects/{pid}/library")
+def whole_library(pid: str = Path(pattern=ID)):
+    """References (including Trash), collections and duplicate groups together, so the
+    page loads with one request instead of three."""
+    engine = require_db()
+    require_project(engine, pid)
+    refs = db.list_references(engine, pid, include_trash=True)
+    groups = library.duplicate_groups([r for r in refs if not r.get("deleted_at")])
+    return {"references": refs, "collections": db.list_collections(engine, pid),
+            "duplicates": {"groups": [[r["id"] for r in g] for g in groups],
+                           "rule": library.__doc__.split("\n\n")[1].strip()}}
+
+
 # ------------------------------------------------------------------ duplicates
 @app.get("/api/projects/{pid}/duplicates")
 def duplicates(pid: str = Path(pattern=ID)):

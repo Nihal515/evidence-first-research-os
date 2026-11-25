@@ -66,10 +66,10 @@ export default function App() {
 
   const reload = useCallback(async (pid: string) => {
     try {
-      const [r, c, d] = await Promise.all([api.references(pid, true), api.collections(pid), api.duplicates(pid)]);
-      setRefs(r);
-      setCollections(c);
-      setDups(d);
+      const lib = await api.library(pid); // one request: references, collections, duplicates
+      setRefs(lib.references);
+      setCollections(lib.collections);
+      setDups(lib.duplicates);
       setError("");
     } catch (err) {
       setError(err instanceof ApiError ? err.message : "Could not load your library.");
@@ -303,7 +303,12 @@ export default function App() {
             The database is not connected yet, so changes cannot be saved. Live checks still work.
           </div>
         )}
-        {error && <div className="notice notice-warn" role="alert">{error}</div>}
+        {error && (
+          <div className="notice notice-warn" role="alert">
+            {error}
+            <button className="btn-ghost btn-sm" onClick={() => reload(project.id)}>Try again</button>
+          </div>
+        )}
         {pendingDelete && (
           <div className="notice notice-warn confirm-bar" role="alertdialog" aria-label="Delete collection">
             <span>Delete the collection <b>{pendingDelete.name}</b> and its sub-collections? The references stay in your library.</span>

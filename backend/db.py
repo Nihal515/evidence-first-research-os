@@ -133,10 +133,30 @@ def get_engine() -> Optional[Engine]:
     return _engine
 
 
+def _schema_is_current(conn) -> bool:
+    insp = inspect(conn)
+    tables = set(insp.get_table_names())
+    for table in metadata.sorted_tables:
+        if table.name not in tables:
+            return False
+        have = {c["name"] for c in insp.get_columns(table.name)}
+        if any(col.name not in have for col in table.columns):
+            return False
+    return True
+
+
 def _ensure_schema(engine: Engine) -> None:
+    """Create or migrate the schema only when something is missing. The normal case
+    (schema already current) takes no lock and runs no DDL, so cold starts stay fast."""
     is_pg = engine.dialect.name == "postgresql"
     with engine.connect() as conn:
+        if _schema_is_current(conn):
+            conn.rollback()
+            return
+        conn.rollback()
         if is_pg:
+            # never wait forever on a lock: fail fast and let the next request retry
+            conn.execute(text("SET lock_timeout = '10s'"))
             conn.execute(text("SELECT pg_advisory_lock(:k)"), {"k": SCHEMA_LOCK_KEY})
             conn.commit()
         try:
