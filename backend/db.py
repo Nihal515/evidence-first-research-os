@@ -69,6 +69,7 @@ project_references = Table(
     Column("notes", Text, nullable=True),
     Column("abstract", Text, nullable=True),
     Column("oa_pdf_url", Text, nullable=True),      # free legal copy found by OpenAlex
+    Column("oa_info", Text, nullable=True),         # JSON: where the free copy is, which version, when checked
     Column("pdf_pathname", Text, nullable=True),    # the user's own uploaded PDF (private storage)
     UniqueConstraint("project_id", "doi", name="uq_project_doi"),
 )
@@ -261,6 +262,7 @@ def _ref_row(row) -> dict:
         "notes": row["notes"] or "",
         "abstract": row["abstract"],
         "oa_pdf_url": row["oa_pdf_url"],
+        "free_copy": json.loads(row["oa_info"]) if row["oa_info"] else None,
         "has_uploaded_pdf": bool(row["pdf_pathname"]),
         "collection_ids": [],
     }
@@ -341,7 +343,7 @@ def get_references(engine: Engine, pid: str, ids: list[str]) -> list[dict]:
 
 def set_reference_fields(engine: Engine, pid: str, ids: list[str], **values) -> int:
     """Update library fields (favorite, read_at, deleted_at, notes, abstract, oa_pdf_url, pdf_pathname)."""
-    allowed = {"favorite", "read_at", "deleted_at", "notes", "abstract", "oa_pdf_url", "pdf_pathname"}
+    allowed = {"favorite", "read_at", "deleted_at", "notes", "abstract", "oa_pdf_url", "oa_info", "pdf_pathname"}
     values = {k: v for k, v in values.items() if k in allowed}
     if not ids or not values:
         return 0

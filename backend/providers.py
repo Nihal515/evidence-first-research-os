@@ -215,6 +215,23 @@ def openalex_by_doi(client: httpx.Client, doi: str) -> ProviderResult:
     return ProviderResult(OK, "OpenAlex", body)
 
 
+OPENALEX_OA_SELECT = "id,doi,open_access,best_oa_location,abstract_inverted_index"
+
+
+def openalex_open_access(client: httpx.Client, doi: str) -> ProviderResult:
+    """Open-access locations (free legal copies) and the abstract for one DOI."""
+    url = f"https://api.openalex.org/works/doi:{quote(doi, safe='/')}"
+    r, reason = _get(client, url, params=_openalex_params({"select": OPENALEX_OA_SELECT}), headers=_headers())
+    if r is None:
+        return ProviderResult(UNAVAILABLE, "OpenAlex", detail=reason)
+    if r.status_code == 404:
+        return ProviderResult(NOT_FOUND, "OpenAlex")
+    body = _json(r)
+    if r.status_code != 200 or not isinstance(body, dict):
+        return ProviderResult(UNAVAILABLE, "OpenAlex", detail=f"unexpected response {r.status_code}")
+    return ProviderResult(OK, "OpenAlex", body)
+
+
 def openalex_search(client: httpx.Client, query: str, rows: int = 10) -> ProviderResult:
     params = _openalex_params({"search": query, "per_page": rows, "select": OPENALEX_SELECT})
     r, reason = _get(client, "https://api.openalex.org/works", params=params, headers=_headers())

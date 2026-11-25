@@ -172,6 +172,12 @@ export default function App() {
     }
   }
 
+  function onOpenPdf(r: Reference) {
+    // opening the free copy counts as reading it, as in other reference managers
+    if (!project || r.read_at) return;
+    api.patch(project.id, r.id, { read: true }).then(() => reload(project.id)).catch(() => undefined);
+  }
+
   async function onBulk(action: BulkAction, ids: string[], collectionId?: string) {
     if (!project) return;
     let message: { ok: boolean; message: string } | null = null;
@@ -276,7 +282,7 @@ export default function App() {
   ) : (
     <LibraryView refs={viewRefs} view={view} title={viewTitle(view, collections)} collections={collections} compact={compact}
       selected={selected} setSelected={setSelected} activeId={activeId} totalInLibrary={activeRefs.length}
-      onOpen={setActiveId} onFavorite={onFavorite} onBulk={onBulk} onExport={onExport}
+      onOpen={setActiveId} onFavorite={onFavorite} onBulk={onBulk} onExport={onExport} onOpenPdf={onOpenPdf}
       onAdd={() => setAddOpen(true)} onMenu={() => setDrawer(true)}
       exportMessage={exportMessage} clearExportMessage={() => setExportMessage(null)} />
   );

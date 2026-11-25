@@ -222,6 +222,8 @@ input, textarea, select { font: inherit; color: var(--ink); }
 @media (max-width: 1280px) { .ref-table .col-added { display: none; } }
 @media (max-width: 1100px) { .ref-table .col-source { display: none; } }
 .pdf-on { color: var(--teal); }
+.free-link { text-decoration: none; }
+.card-pdf { width: 38px; height: 38px; }
 .star svg { color: #c3cad4; }
 .star:hover svg { color: var(--star); }
 .star-on svg { color: var(--star); fill: var(--star); }
@@ -360,7 +362,7 @@ input, textarea, select { font: inherit; color: var(--ink); }
 .blocked { margin: 0; color: var(--red); font-weight: 700; }
 .checks { width: 100%; border-collapse: collapse; font-size: 13px; }
 .checks th { text-align: left; font-size: 11.5px; text-transform: uppercase; letter-spacing: 0.05em; color: var(--muted); padding: 6px 8px; border-bottom: 1px solid var(--line); }
-.checks td:first-child, .checks th:first-child { white-space: nowrap; }
+.checks td:first-child, .checks th:first-child, .checks td:nth-child(2) { white-space: nowrap; }
 .checks td { padding: 7px 8px; border-bottom: 1px solid var(--line-2); vertical-align: top; color: var(--ink); overflow-wrap: anywhere; }
 .chk-match td:nth-child(2) { color: var(--teal-2); font-weight: 700; }
 .chk-mismatch td:nth-child(2) { color: var(--red); font-weight: 700; }

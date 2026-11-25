@@ -111,6 +111,7 @@ export const api = {
   duplicates: (id: string) => request<{ groups: string[][]; rule: string }>(`/api/projects/${id}/duplicates`),
   merge: (id: string, keepId: string, removeIds: string[]) =>
     request<Reference>(`/api/projects/${id}/duplicates/merge`, json({ keep_id: keepId, remove_ids: removeIds })),
+  freeCopy: (id: string, rid: string) => request<Reference>(`/api/projects/${id}/references/${rid}/free-copy`, { method: "POST" }),
   recheck: (id: string, rid: string) => request<Reference>(`/api/projects/${id}/references/${rid}/recheck`, { method: "POST" }),
   audit: (id: string) => request<AuditEvent[]>(`/api/projects/${id}/audit`),
   summary: (id: string) => request<Summary>(`/api/projects/${id}/summary`),

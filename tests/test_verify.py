@@ -37,8 +37,9 @@ class Fake:
     """Programmable stand-in for the provider adapters."""
 
     def __init__(self, monkeypatch, *, work=None, handle=p.NOT_FOUND, csl=None, search=None,
-                 oa_doi=p.NOT_FOUND, oa_search=None, updates=None):
+                 oa_doi=p.NOT_FOUND, oa_search=None, updates=None, open_access=p.NOT_FOUND):
         self.work, self.handle, self.csl = work, handle, csl
+        self.open_access = open_access
         self.search_res, self.oa_doi, self.oa_search = search, oa_doi, oa_search
         self.updates = updates
         monkeypatch.setattr(p, "crossref_work", self._work)
@@ -48,6 +49,12 @@ class Fake:
         monkeypatch.setattr(p, "openalex_by_doi", self._oa_doi)
         monkeypatch.setattr(p, "openalex_search", self._oa_search)
         monkeypatch.setattr(p, "crossref_updates", self._updates)
+        monkeypatch.setattr(p, "openalex_open_access", self._open_access)
+
+    def _open_access(self, c, doi):
+        if isinstance(self.open_access, dict):
+            return p.ProviderResult(p.OK, "OpenAlex", self.open_access)
+        return p.ProviderResult(self.open_access, "OpenAlex", detail="x")
 
     def _work(self, c, doi):
         if self.work == p.UNAVAILABLE:

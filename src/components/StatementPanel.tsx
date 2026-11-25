@@ -27,6 +27,7 @@ const EVENT_TEXT: Record<string, string> = {
   EXPORT_APA_DOWNLOADED: "Downloaded the APA 7 list",
   EXPORT_BIBTEX_DOWNLOADED: "Downloaded BibTeX",
   EXPORT_RIS_DOWNLOADED: "Downloaded RIS",
+  FREE_COPY_CHECKED: "Looked up a free legal copy",
   STATEMENT_COPIED: "Copied the AI-use statement",
   STATEMENT_DOWNLOADED: "Downloaded the AI-use statement",
 };

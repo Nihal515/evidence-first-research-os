@@ -1,4 +1,4 @@
-import { ArrowLeft, BookOpenCheck, Copy, ExternalLink, FolderPlus, RotateCcw, Star, Trash2, X } from "lucide-react";
+import { ArrowLeft, BookOpenCheck, Copy, ExternalLink, FileText, FolderPlus, RotateCcw, Search, Star, Trash2, X } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import { api, ApiError } from "../api";
 import { LABELS } from "../labels";
@@ -25,6 +25,8 @@ const RETRACTION: Record<string, { text: string; cls: string }> = {
   none_found: { text: "No retraction notice found", cls: "chip-grey" },
   unknown: { text: "Retraction status unknown", cls: "chip-amber" },
 };
+
+const capital = (t: string) => t.charAt(0).toUpperCase() + t.slice(1);
 
 export function DetailPanel({ projectId, reference: r, collections, compact, onClose, onChanged }: Props) {
   const [notes, setNotes] = useState(r.notes);
@@ -148,6 +150,40 @@ export function DetailPanel({ projectId, reference: r, collections, compact, onC
             </button>
           )}
         </section>
+
+        {!trashed && r.label === "verified" && r.doi && (
+          <section className="detail-section">
+            <h4>Free legal copy</h4>
+            {r.free_copy?.status === "found" && r.free_copy.url ? (
+              <>
+                <a className="btn-secondary btn-sm free-link" href={r.free_copy.url} target="_blank" rel="noopener noreferrer"
+                  onClick={() => { if (!r.read_at) api.patch(projectId, r.id, { read: true }).then((u) => onChanged(u)).catch(() => undefined); }}>
+                  <FileText size={14} /> Open {r.free_copy.is_pdf ? "PDF" : "free copy"} <ExternalLink size={12} />
+                </a>
+                <p className="hint small">
+                  {capital(r.free_copy.version_text || "version not stated")}
+                  {r.free_copy.host ? `, from ${r.free_copy.host}` : ""}{r.free_copy.license ? ` · licence: ${r.free_copy.license}` : ""}.
+                  {r.free_copy.version && r.free_copy.version !== "publishedVersion"
+                    ? " This may differ from the published article — cite the published version." : ""}
+                  {" "}Found by OpenAlex.
+                </p>
+              </>
+            ) : (
+              <p className="hint small">
+                {r.free_copy?.status === "none" && "No free legal copy was found by OpenAlex."}
+                {r.free_copy?.status === "unavailable" && "OpenAlex could not be reached last time."}
+                {!r.free_copy && "Not looked up yet."}
+              </p>
+            )}
+            {r.free_copy?.checked_at && <p className="meta-line">Checked {new Date(r.free_copy.checked_at).toLocaleString()}</p>}
+            {(!r.free_copy || r.free_copy.status !== "found") && (
+              <button className="btn-ghost btn-sm" disabled={busy === "oa"}
+                onClick={() => run("oa", () => api.freeCopy(projectId, r.id))}>
+                <Search size={14} /> {busy === "oa" ? "Looking…" : r.free_copy ? "Look again" : "Find a free legal copy"}
+              </button>
+            )}
+          </section>
+        )}
 
         {!trashed && (
           <section className="detail-section">

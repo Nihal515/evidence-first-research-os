@@ -2,6 +2,7 @@
 one-click approval, reference list, audit log and AI-use summary."""
 from __future__ import annotations
 
+import json
 import os
 import re
 from typing import Literal, Optional
@@ -13,6 +14,7 @@ from pydantic import BaseModel, Field
 from . import db
 from . import keycheck
 from . import library
+from . import openaccess
 from . import providers
 from .labels import LABELS, NOT_FOUND, NOT_YET_VERIFIED, VERIFIED
 from .records import normalize_doi, record_from_crossref
@@ -232,12 +234,18 @@ def approve_reference(body: CheckIn, pid: str = Path(pattern=ID)):
             raise HTTPException(422, {"message": "This reference could not be verified, so it was not added.",
                                       "result": result.to_dict()})
         values = _values_from_result(client, result, body)
+        free = abstract = None
+        if values["label"] == VERIFIED and values["doi"]:
+            free, abstract = openaccess.find_free_copy(client, values["doi"])
     existing = db.find_reference_by_doi(engine, pid, values["doi"]) if values["doi"] else None
     if existing:
         if existing.get("deleted_at"):
             raise HTTPException(409, "This source is already in your library, in Trash. Restore it from Trash.")
         raise HTTPException(409, "This source is already in your reference list.")
     ref = db.add_reference(engine, pid, values)
+    if free:
+        _store_free_copy(engine, pid, ref["id"], free, abstract)
+        ref = db.get_reference(engine, pid, ref["id"])
     if body.collection_id and db.get_collection(engine, pid, body.collection_id):
         db.add_to_collection(engine, pid, body.collection_id, [ref["id"]])
         ref = db.get_reference(engine, pid, ref["id"])
@@ -245,6 +253,30 @@ def approve_reference(body: CheckIn, pid: str = Path(pattern=ID)):
            {"reference_id": ref["id"], "doi": ref["doi"], "label": ref["label"], "title": ref["title"][:200],
             "retraction": ref["retraction"].get("status")})
     return ref
+
+
+def _store_free_copy(engine, pid: str, rid: str, free: dict, abstract) -> None:
+    values = {"oa_info": json.dumps(free)}
+    if free.get("status") in ("found", "none"):  # an outage never erases a copy found earlier
+        values["oa_pdf_url"] = free.get("url") if free.get("status") == "found" else None
+    if abstract:
+        values["abstract"] = abstract
+    db.set_reference_fields(engine, pid, [rid], **values)
+
+
+@app.post("/api/projects/{pid}/references/{rid}/free-copy")
+def free_copy(pid: str = Path(pattern=ID), rid: str = Path(pattern=ID)):
+    """Look up (again) a free legal copy of a Verified reference via OpenAlex."""
+    engine = require_db()
+    require_project(engine, pid)
+    ref = require_reference(engine, pid, rid)
+    if ref["label"] != VERIFIED or not ref["doi"]:
+        raise HTTPException(409, "Free copies are looked up for Verified references with a DOI.")
+    with providers.make_client() as client:
+        free, abstract = openaccess.find_free_copy(client, ref["doi"])
+    _store_free_copy(engine, pid, rid, free, abstract)
+    db.log(engine, pid, "system", "FREE_COPY_CHECKED", {"reference_id": rid, "status": free["status"]})
+    return db.get_reference(engine, pid, rid)
 
 
 @app.get("/api/projects/{pid}/references")

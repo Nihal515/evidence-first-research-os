@@ -167,6 +167,14 @@ async function run(mobile) {
   const cite = (await page.locator('.detail .apa-one').innerText()).trim();
   ok(`[${tag}] detail panel shows the exact APA 7 reference`, cite === LECUN_APA, cite.slice(0, 50));
   ok(`[${tag}] detail panel explains the label`, (await page.locator('.detail').innerText()).includes('WHY THIS LABEL'));
+  const freeText = await page.locator('.detail').innerText();
+  const freeLink = page.locator('.detail a.free-link');
+  const found = (await freeLink.count()) > 0;
+  ok(`[${tag}] free legal copy section is honest`,
+    freeText.includes('FREE LEGAL COPY') && (found
+      ? ((await freeLink.getAttribute('href')) || '').startsWith('http') && /version|preprint|manuscript/i.test(freeText) && freeText.includes('Found by OpenAlex')
+      : /No free legal copy was found|could not be reached|Not looked up yet/.test(freeText)),
+    found ? 'free copy found' : 'none found');
   await shot('06-detail');
   // trash and restore
   await page.locator('.detail').getByRole('button', { name: 'Move to Trash' }).click();

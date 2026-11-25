@@ -76,3 +76,11 @@ def test_live_search_finds_real_paper(client):
     res = v.search(client, "Deep learning LeCun Bengio Hinton 2015")
     assert res["status"] == "ok"
     assert any(r.doi == "10.1038/nature14539" for r in res["records"])
+
+
+def test_live_free_copy_and_version_for_a_real_paper(client):
+    from backend import openaccess
+    info, _ = openaccess.find_free_copy(client, "10.1038/nature14539")
+    assert info["status"] in ("found", "none")  # depends on OpenAlex's current data, never "unavailable" when up
+    if info["status"] == "found":
+        assert info["url"].startswith("http") and info["version_text"]

@@ -85,8 +85,23 @@ export interface Reference {
   notes: string;
   abstract: string | null;
   oa_pdf_url: string | null;
+  free_copy: FreeCopy | null;
   has_uploaded_pdf: boolean;
   collection_ids: string[];
+}
+
+export interface FreeCopy {
+  status: "found" | "none" | "unavailable" | "no_doi";
+  url?: string;
+  is_pdf?: boolean;
+  version?: string | null;
+  version_text?: string;
+  host?: string;
+  host_type?: string;
+  license?: string;
+  oa_status?: string;
+  detail?: string;
+  checked_at: string;
 }
 
 export interface Collection {

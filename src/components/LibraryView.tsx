@@ -25,6 +25,7 @@ interface Props {
   totalInLibrary: number;
   onOpen: (id: string) => void;
   onFavorite: (r: Reference) => void;
+  onOpenPdf: (r: Reference) => void;
   onBulk: (action: BulkAction, ids: string[], collectionId?: string) => Promise<void>;
   onExport: (format: ExportFormat, refs: Reference[]) => Promise<void>;
   onAdd: () => void;
@@ -71,6 +72,8 @@ export function LibraryView(p: Props) {
   const inTrash = p.view.kind === "trash";
   const inCollection = p.view.kind === "collection" ? p.view.collectionId : undefined;
   const hasPdfs = p.refs.some((r) => r.oa_pdf_url || r.has_uploaded_pdf);
+  const pdfTitle = (r: Reference) =>
+    `Open free ${r.free_copy?.is_pdf ? "PDF" : "copy"}${r.free_copy?.version_text ? ` (${r.free_copy.version_text})` : ""}${r.free_copy?.host ? ` from ${r.free_copy.host}` : ""}`;
   const nFilters = activeFilterCount(filters);
   const flatCollections = useMemo(() => flattenTree(collectionTree(p.collections)), [p.collections]);
 
@@ -286,6 +289,12 @@ export function LibraryView(p: Props) {
                   <span className="ref-card-title">{r.title}</span>
                   <span className="ref-card-meta">{authorShort(r.authors)}{r.year ? ` · ${r.year}` : ""}{r.container ? ` · ${r.container}` : ""}</span>
                 </button>
+                {r.oa_pdf_url && !inTrash && (
+                  <a className="icon-btn pdf-on card-pdf" href={r.oa_pdf_url} target="_blank" rel="noopener noreferrer"
+                    title={pdfTitle(r)} aria-label={pdfTitle(r)} onClick={() => p.onOpenPdf(r)}>
+                    <FileText size={18} />
+                  </a>
+                )}
                 {!inTrash && (
                   <button className={`icon-btn star${r.favorite ? " star-on" : ""}`} aria-pressed={r.favorite}
                     aria-label={r.favorite ? "Remove from favourites" : "Add to favourites"} onClick={() => p.onFavorite(r)}>
@@ -354,8 +363,13 @@ export function LibraryView(p: Props) {
                     <td className="col-trust"><TrustLabel label={r.label} size="sm" /></td>
                     <td className="col-added">{shortDate(inTrash && r.deleted_at ? r.deleted_at : r.approved_at)}</td>
                     {hasPdfs && (
-                      <td className="col-pdf">
-                        {(r.oa_pdf_url || r.has_uploaded_pdf) && <FileText size={16} className="pdf-on" aria-label="PDF available" />}
+                      <td className="col-pdf" onClick={(e) => e.stopPropagation()}>
+                        {r.oa_pdf_url && (
+                          <a className="icon-btn pdf-on" href={r.oa_pdf_url} target="_blank" rel="noopener noreferrer"
+                            title={pdfTitle(r)} aria-label={pdfTitle(r)} onClick={() => p.onOpenPdf(r)}>
+                            <FileText size={16} />
+                          </a>
+                        )}
                       </td>
                     )}
                   </tr>
