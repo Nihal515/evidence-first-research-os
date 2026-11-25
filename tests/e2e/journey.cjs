@@ -156,7 +156,8 @@ async function run(mobile) {
   await page.locator('.notice-ok').waitFor();
   ok(`[${tag}] bulk-filed into a collection`, (await page.locator('.notice-ok').innerText()).includes('Filed 2'));
   await goView('Chapter 2');
-  ok(`[${tag}] collection shows its references`, (await rows().count()) === 2);
+  await rows().nth(1).waitFor({ timeout: 10000 }).catch(() => {});
+  ok(`[${tag}] collection shows its references`, (await rows().count()) === 2, String(await rows().count()));
   await shot('05-collection');
   await goView('All references');
 

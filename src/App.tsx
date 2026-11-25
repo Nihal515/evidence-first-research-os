@@ -174,18 +174,20 @@ export default function App() {
 
   async function onBulk(action: BulkAction, ids: string[], collectionId?: string) {
     if (!project) return;
+    let message: { ok: boolean; message: string } | null = null;
     try {
       const res = await api.bulk(project.id, ids, action, collectionId);
       if (action === "add_to_collection") {
         const name = collections.find((c) => c.id === collectionId)?.name;
-        setExportMessage({ ok: true, message: `Filed ${res.count ? res.count : "nothing new"}${res.count ? ` reference${res.count === 1 ? "" : "s"}` : ""} in ${name}.` });
+        message = { ok: true, message: res.count ? `Filed ${res.count} reference${res.count === 1 ? "" : "s"} in ${name}.` : `Already in ${name}.` };
       }
-      if (action === "trash") setExportMessage({ ok: true, message: `Moved ${ids.length} to Trash. You can restore ${ids.length === 1 ? "it" : "them"} from Trash.` });
+      if (action === "trash") message = { ok: true, message: `Moved ${ids.length} to Trash. You can restore ${ids.length === 1 ? "it" : "them"} from Trash.` };
       if (["trash", "delete_forever"].includes(action) && activeId && ids.includes(activeId)) setActiveId(null);
     } catch (err) {
-      setExportMessage({ ok: false, message: err instanceof ApiError ? err.message : "That did not work." });
+      message = { ok: false, message: err instanceof ApiError ? err.message : "That did not work." };
     }
-    await reload(project.id);
+    await reload(project.id); // show the confirmation only once the library reflects it
+    if (message) setExportMessage(message);
   }
 
   async function onExport(format: ExportFormat, scope: Reference[]) {
