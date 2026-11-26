@@ -69,6 +69,7 @@ input, textarea, select { font: inherit; color: var(--ink); }
 .btn-ghost:hover:not(:disabled) { background: var(--hover); }
 .btn-danger { background: var(--red); color: #fff; }
 .btn-danger-text { color: var(--red); }
+a.btn-primary, a.btn-secondary, a.btn-ghost { text-decoration: none; }
 .btn-sm { min-height: 32px; padding: 0 10px; font-size: 13px; }
 .icon-btn {
   display: inline-flex; align-items: center; justify-content: center; width: 30px; height: 30px;
@@ -225,7 +226,7 @@ input, textarea, select { font: inherit; color: var(--ink); }
 .col-source { width: 15%; color: var(--body) !important; }
 .col-trust { width: 150px; }
 .col-added { width: 110px; color: var(--body) !important; font-variant-numeric: tabular-nums; }
-.col-pdf { width: 54px; text-align: center; }
+.col-pdf { width: 84px; text-align: center; white-space: nowrap; }
 /* narrower table: when the detail panel is open, or on mid-size screens, drop the least important columns */
 .ref-table-narrow .col-source, .ref-table-narrow .col-added { display: none; }
 .ref-table-narrow .col-authors { width: 26%; }

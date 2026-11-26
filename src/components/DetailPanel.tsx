@@ -120,6 +120,15 @@ export function DetailPanel({ projectId, reference: r, collections, compact, onC
           {r.provider && (<><dt>Record from</dt><dd>{r.provider}</dd></>)}
         </dl>
 
+        {r.doi && !trashed && (
+          <div className="actions">
+            <a className="btn-primary btn-sm" href={`https://doi.org/${r.doi}`} target="_blank" rel="noopener noreferrer"
+              onClick={() => { if (!r.read_at) api.patch(projectId, r.id, { read: true }).then((u) => onChanged(u)).catch(() => undefined); }}>
+              <ExternalLink size={14} /> Open article (doi.org)
+            </a>
+          </div>
+        )}
+
         {r.retraction?.status === "retracted" && (
           <p className="warn-line" role="note">⚠ {r.retraction.detail} Do not rely on its findings.</p>
         )}

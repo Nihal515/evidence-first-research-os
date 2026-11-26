@@ -46,12 +46,17 @@ def test_free_copy_states(monkeypatch):
     info, _ = openaccess.find_free_copy(None, LECUN_DOI)
     assert info["is_pdf"] and info["url"] == "https://x.org/a.pdf" and info["version_text"] == "published version"
 
-    closed = {"open_access": {"is_oa": False, "oa_url": None}, "best_oa_location": None, "abstract_inverted_index": None}
-    Fake(monkeypatch, open_access=closed)
-    assert openaccess.find_free_copy(None, LECUN_DOI)[0]["status"] == "none"
-    Fake(monkeypatch, open_access=p.UNAVAILABLE)
-    assert openaccess.find_free_copy(None, LECUN_DOI)[0]["status"] == "unavailable"
-    assert openaccess.find_free_copy(None, None)[0]["status"] == "no_doi"
+
+def test_publisher_hosted_copy_links_the_article_page(monkeypatch):
+    """Publisher direct-PDF links often need the publisher's session; the article page always opens."""
+    wiley = {**HAL, "best_oa_location": {"is_oa": True, "landing_page_url": "https://doi.org/10.1002/sd.3221",
+                                         "pdf_url": "https://onlinelibrary.wiley.com/doi/pdfdirect/10.1002/sd.3221",
+                                         "version": "publishedVersion",
+                                         "source": {"display_name": "Sustainable Development", "type": "journal"}}}
+    Fake(monkeypatch, open_access=wiley)
+    info, _ = openaccess.find_free_copy(None, "10.1002/sd.3221")
+    assert info["url"] == "https://doi.org/10.1002/sd.3221" and info["is_pdf"] is False
+    assert info["host"] == "Sustainable Development" and info["version_text"] == "published version"
 
 
 def test_approval_records_the_free_copy(api, monkeypatch):

@@ -49,10 +49,16 @@ def find_free_copy(client, doi: Optional[str]) -> tuple[dict, Optional[str]]:
     abstract = abstract_from_inverted_index(body.get("abstract_inverted_index"))
     best = body.get("best_oa_location") or {}
     oa = body.get("open_access") or {}
-    url = best.get("pdf_url") or best.get("landing_page_url") or oa.get("oa_url")
+    source = best.get("source") or {}
+    # A publisher's direct PDF link (e.g. Wiley "pdfdirect", Elsevier "pdfft") often refuses
+    # a visitor without the publisher's own session cookie. When the free copy is on the
+    # journal's site, link its article page instead, which always opens and offers the PDF.
+    if source.get("type") == "journal" and best.get("landing_page_url"):
+        url = best.get("landing_page_url")
+    else:
+        url = best.get("pdf_url") or best.get("landing_page_url") or oa.get("oa_url")
     if not (oa.get("is_oa") or best.get("is_oa")) or not url:
         return {"status": "none", "checked_at": checked}, abstract
-    source = best.get("source") or {}
     version = best.get("version")
     return {
         "status": "found",

@@ -1,5 +1,5 @@
 import {
-  ArrowDown, ArrowUp, BookOpenCheck, Download, FileText, FolderInput, Menu, Plus, RotateCcw, Search,
+  ArrowDown, ArrowUp, BookOpenCheck, Download, ExternalLink, FileText, FolderInput, Menu, Plus, RotateCcw, Search,
   SlidersHorizontal, Star, Trash2, X, FolderMinus, ListChecks,
 } from "lucide-react";
 import { useCallback, useMemo, useRef, useState } from "react";
@@ -71,9 +71,14 @@ export function LibraryView(p: Props) {
   const selCount = p.selected.size;
   const inTrash = p.view.kind === "trash";
   const inCollection = p.view.kind === "collection" ? p.view.collectionId : undefined;
-  const hasPdfs = p.refs.some((r) => r.oa_pdf_url || r.has_uploaded_pdf);
+  // Every reference with a DOI opens its article page on doi.org (the publisher's site);
+  // a free legal copy found by OpenAlex is a second link, labelled with its version and host.
+  const hasPdfs = p.refs.some((r) => r.doi || r.oa_pdf_url || r.has_uploaded_pdf);
+  const doiUrl = (r: Reference) => `https://doi.org/${r.doi}`;
+  const freeLink = (r: Reference) => r.oa_pdf_url && r.oa_pdf_url.toLowerCase() !== doiUrl(r).toLowerCase() ? r.oa_pdf_url : null;
   const pdfTitle = (r: Reference) =>
     `Open free ${r.free_copy?.is_pdf ? "PDF" : "copy"}${r.free_copy?.version_text ? ` (${r.free_copy.version_text})` : ""}${r.free_copy?.host ? ` from ${r.free_copy.host}` : ""}`;
+  const doiTitle = (r: Reference) => `Open the article page on doi.org (${r.doi})`;
   const nFilters = activeFilterCount(filters);
   const flatCollections = useMemo(() => flattenTree(collectionTree(p.collections)), [p.collections]);
 
@@ -289,8 +294,14 @@ export function LibraryView(p: Props) {
                   <span className="ref-card-title">{r.title}</span>
                   <span className="ref-card-meta">{authorShort(r.authors)}{r.year ? ` · ${r.year}` : ""}{r.container ? ` · ${r.container}` : ""}</span>
                 </button>
-                {r.oa_pdf_url && !inTrash && (
-                  <a className="icon-btn pdf-on card-pdf" href={r.oa_pdf_url} target="_blank" rel="noopener noreferrer"
+                {r.doi && !inTrash && (
+                  <a className="icon-btn pdf-on card-pdf" href={doiUrl(r)} target="_blank" rel="noopener noreferrer"
+                    title={doiTitle(r)} aria-label={doiTitle(r)} onClick={() => p.onOpenPdf(r)}>
+                    <ExternalLink size={18} />
+                  </a>
+                )}
+                {freeLink(r) && !inTrash && (
+                  <a className="icon-btn pdf-on card-pdf" href={freeLink(r)!} target="_blank" rel="noopener noreferrer"
                     title={pdfTitle(r)} aria-label={pdfTitle(r)} onClick={() => p.onOpenPdf(r)}>
                     <FileText size={18} />
                   </a>
@@ -326,7 +337,7 @@ export function LibraryView(p: Props) {
                     </button>
                   </th>
                 ))}
-                {hasPdfs && <th className="col-pdf">PDF</th>}
+                {hasPdfs && <th className="col-pdf">Open</th>}
               </tr>
             </thead>
             <tbody>
@@ -364,8 +375,14 @@ export function LibraryView(p: Props) {
                     <td className="col-added">{shortDate(inTrash && r.deleted_at ? r.deleted_at : r.approved_at)}</td>
                     {hasPdfs && (
                       <td className="col-pdf" onClick={(e) => e.stopPropagation()}>
-                        {r.oa_pdf_url && (
-                          <a className="icon-btn pdf-on" href={r.oa_pdf_url} target="_blank" rel="noopener noreferrer"
+                        {r.doi && (
+                          <a className="icon-btn pdf-on" href={doiUrl(r)} target="_blank" rel="noopener noreferrer"
+                            title={doiTitle(r)} aria-label={doiTitle(r)} onClick={() => p.onOpenPdf(r)}>
+                            <ExternalLink size={16} />
+                          </a>
+                        )}
+                        {freeLink(r) && (
+                          <a className="icon-btn pdf-on" href={freeLink(r)!} target="_blank" rel="noopener noreferrer"
                             title={pdfTitle(r)} aria-label={pdfTitle(r)} onClick={() => p.onOpenPdf(r)}>
                             <FileText size={16} />
                           </a>
