@@ -221,3 +221,39 @@ def test_all_models_busy_is_reported_not_guessed(monkeypatch):
     with httpx.Client(transport=httpx.MockTransport(handler)) as c:
         with pytest.raises(ai.AIUnavailable, match="overloaded"):
             ai.generate_json(c, "s", "p", {})
+
+
+def test_nvidia_nemotron_backup_answers_when_gemini_is_busy(monkeypatch):
+    """With NVIDIA_API_KEY set, Nemotron joins the race. Its embedding and safety models are
+    not used for chat, and reasoning text or code fences around the JSON are removed."""
+    import json as _json
+    import httpx
+    asked = []
+
+    def handler(req):
+        u = str(req.url)
+        if "generativelanguage" in u:
+            if u.endswith("/models?pageSize=200"):
+                return httpx.Response(200, json={"models": [{"name": "models/gemini-3.8-flash", "supportedGenerationMethods": ["generateContent"]}]})
+            return httpx.Response(503, json={"error": {"message": "high demand"}})
+        if u.endswith("/v1/models"):
+            ids = ["nvidia/llama-nemotron-embed-1b-v2", "nvidia/nemotron-content-safety", "nvidia/nemotron-3.5-nano-30b",
+                   "nvidia/nemotron-3.5-super-120b", "meta/llama-3.3-70b-instruct"]
+            return httpx.Response(200, json={"data": [{"id": i} for i in ids]})
+        body = _json.loads(req.content)
+        asked.append(body["model"])
+        assert req.headers["Authorization"] == "Bearer nvapi-test" and "response_format" not in body
+        text = "<think>checking</think>```json\n" + _json.dumps({"ok": 2}) + "\n```"
+        return httpx.Response(200, json={"choices": [{"message": {"content": text}}]})
+    monkeypatch.setenv("LLM_PROVIDER", "gemini")
+    monkeypatch.setenv("LLM_API_KEY", "x")
+    monkeypatch.setenv("NVIDIA_API_KEY", "nvapi-test")
+    monkeypatch.delenv("GROQ_API_KEY", raising=False)
+    monkeypatch.delenv("NVIDIA_MODEL", raising=False)
+    monkeypatch.setattr(ai, "_working_model", None)
+    monkeypatch.setattr(ai, "_model_list", (0.0, []))
+    monkeypatch.setattr(ai, "_nvidia_list", (0.0, []))
+    with httpx.Client(transport=httpx.MockTransport(handler)) as c:
+        assert ai.generate_json(c, "s", "p", {}) == {"ok": 2}
+    assert ai._working_model.startswith("NVIDIA (nvidia/nemotron-3.5-")
+    assert not any("embed" in m or "safety" in m for m in asked)

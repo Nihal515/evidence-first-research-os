@@ -141,6 +141,45 @@ def check_llm_backup(client: httpx.Client) -> dict:
     return _check_llm_key(client, "gemini", key)
 
 
+def check_groq_backup(client: httpx.Client) -> dict:
+    key = _env("GROQ_API_KEY")
+    if not key:
+        return _result("not_configured", "No backup GROQ_API_KEY is saved (optional, free from console.groq.com).",
+                       provider="groq")
+    return _check_llm_key(client, "groq", key)
+
+
+def check_nvidia_backup(client: httpx.Client) -> dict:
+    """NVIDIA API catalog (build.nvidia.com). Its model list is public, so the key is tested
+    with a one-token request to a Nemotron model."""
+    from . import ai
+    key = _env("NVIDIA_API_KEY")
+    if not key:
+        return _result("not_configured", "No backup NVIDIA_API_KEY is saved (optional).", provider="nvidia")
+    if not key.startswith("nvapi-"):
+        return _result("invalid", "NVIDIA API keys start with nvapi-. Copy the key again from build.nvidia.com "
+                                  "(Get API Key), and save only the key itself.", provider="nvidia")
+    model = ai.nvidia_models(client, key)[0]
+    try:
+        r = client.post(f"{ai.NVIDIA_BASE}/chat/completions", headers={"Authorization": f"Bearer {key}"},
+                        json={"model": model, "max_tokens": 1, "messages": [{"role": "user", "content": "ok"}]},
+                        timeout=15.0)
+    except httpx.HTTPError:
+        r = None
+    if r is None or r.status_code >= 500:
+        return _result("unavailable", "NVIDIA could not be reached, so the key could not be tested right now.",
+                       provider="nvidia", model=model)
+    if r.status_code == 200:
+        return _result("valid", f"NVIDIA accepted the key ({model}).", provider="nvidia", model=model)
+    if r.status_code == 429:
+        return _result("rate_limited", "NVIDIA accepted the key but its free quota is used up for the moment.",
+                       provider="nvidia", model=model)
+    if r.status_code in (401, 403):
+        return _result("invalid", "NVIDIA rejected this key. Create a new one at build.nvidia.com.", provider="nvidia")
+    return _result("unavailable", f"NVIDIA gave an unexpected answer (HTTP {r.status_code}) for {model}.",
+                   provider="nvidia", model=model)
+
+
 def check_auth(client: httpx.Client) -> dict:
     """Sign-in service: reachable, and publishing the public keys used to verify tokens."""
     base = (os.getenv("NEON_AUTH_BASE_URL") or os.getenv("VITE_NEON_AUTH_URL") or "").strip().rstrip("/")
@@ -170,6 +209,8 @@ def check_all(make_client: Callable[[], httpx.Client], *, use_cache: bool = True
             "openalex": check_openalex(client),
             "llm": check_llm(client),
             "llm_backup": check_llm_backup(client),
+            "llm_backup_groq": check_groq_backup(client),
+            "llm_backup_nvidia": check_nvidia_backup(client),
             "sign_in": check_auth(client),
         }
     _cache.update(at=now, result=result)

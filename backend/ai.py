@@ -38,6 +38,8 @@ GEMINI_BASE = "https://generativelanguage.googleapis.com/v1beta"
 GEMINI_DEFAULT_MODEL = "gemini-flash-latest"  # used only if the model list cannot be read
 GROQ_URL = "https://api.groq.com/openai/v1/chat/completions"
 GROQ_DEFAULT_MODEL = "llama-3.3-70b-versatile"
+NVIDIA_BASE = "https://integrate.api.nvidia.com/v1"  # NVIDIA API catalog (OpenAI-compatible)
+NVIDIA_FALLBACK_MODEL = "meta/llama-3.3-70b-instruct"  # used only if the model list cannot be read
 TIMEOUT = httpx.Timeout(22.0, connect=6.0)  # the whole function has 30 s
 
 _working_model: Optional[str] = None  # remembered per server instance
@@ -55,15 +57,15 @@ def _env(name: str) -> str:
 
 def keys() -> dict:
     """Which AI services have a key: the main LLM_PROVIDER + LLM_API_KEY, plus optional
-    backups GEMINI_API_KEY and GROQ_API_KEY (both free). Keys never leave the server."""
+    backups GEMINI_API_KEY, GROQ_API_KEY and NVIDIA_API_KEY (all have free tiers).
+    Keys never leave the server."""
     out = {}
     prov, key = _env("LLM_PROVIDER").lower(), _env("LLM_API_KEY")
-    if prov in ("gemini", "groq") and key:
+    if prov in ("gemini", "groq", "nvidia") and key:
         out[prov] = key
-    if _env("GEMINI_API_KEY"):
-        out.setdefault("gemini", _env("GEMINI_API_KEY"))
-    if _env("GROQ_API_KEY"):
-        out.setdefault("groq", _env("GROQ_API_KEY"))
+    for name, env in (("gemini", "GEMINI_API_KEY"), ("groq", "GROQ_API_KEY"), ("nvidia", "NVIDIA_API_KEY")):
+        if _env(env):
+            out.setdefault(name, _env(env))
     return out
 
 
@@ -81,7 +83,7 @@ def model_label() -> str:
     if _working_model:
         return _working_model
     k = keys()
-    return " + ".join({"gemini": "Google Gemini", "groq": "Groq"}[x] for x in k) or "none"
+    return " + ".join({"gemini": "Google Gemini", "groq": "Groq", "nvidia": "NVIDIA"}[x] for x in k) or "none"
 
 
 # ------------------------------------------------------------------ calling the models
@@ -163,25 +165,67 @@ def _gemini_once(client, key, model, system, prompt, schema, timeout) -> tuple[s
     return _parse(model, "".join(p.get("text", "") for p in parts if not p.get("thought")))
 
 
-def _groq_once(client, key, model, system, prompt, schema, timeout) -> tuple[str, object]:
-    body = {"model": model, "temperature": 0.2, "response_format": {"type": "json_object"},
-            "messages": [{"role": "system", "content": f"{system}\nReply only with JSON matching this schema: {json.dumps(schema)}"},
+def _extract_json(text: str) -> str:
+    """Models without a strict JSON mode may wrap the JSON in reasoning or code fences."""
+    text = re.sub(r"<think>.*?</think>", "", text or "", flags=re.S).strip()
+    text = re.sub(r"^```(?:json)?\s*|\s*```$", "", text).strip()
+    a, b = text.find("{"), text.rfind("}")
+    return text[a:b + 1] if a != -1 and b > a else text
+
+
+def _openai_once(client, url, key, model, label, system, prompt, schema, timeout, json_mode) -> tuple[str, object]:
+    """One chat-completions call to an OpenAI-compatible service (Groq, NVIDIA)."""
+    body = {"model": model, "temperature": 0.2, "max_tokens": 2048,
+            "messages": [{"role": "system", "content": f"{system}\nReply only with one JSON object matching this "
+                                                         f"schema, with no other text: {json.dumps(schema)}"},
                          {"role": "user", "content": prompt}]}
+    if json_mode:
+        body["response_format"] = {"type": "json_object"}
     try:
-        r = client.post(GROQ_URL, json=body, headers={"Authorization": f"Bearer {key}"},
+        r = client.post(url, json=body, headers={"Authorization": f"Bearer {key}"},
                         timeout=httpx.Timeout(timeout, connect=5.0))
     except httpx.TimeoutException:
+        log.warning("%s timed out", label)
         return "skip", "the AI took too long to answer"
     except httpx.HTTPError:
         return "skip", "the AI service could not be reached"
-    bad = _status(f"groq/{model}", r)
+    bad = _status(label, r)
     if bad:
         return bad
     try:
-        text = r.json()["choices"][0]["message"]["content"]
+        text = r.json()["choices"][0]["message"]["content"] or ""
     except (ValueError, KeyError, IndexError, TypeError):
         text = ""
-    return _parse(f"groq/{model}", text)
+    return _parse(label, _extract_json(text))
+
+
+_nvidia_list: tuple[float, list[str]] = (0.0, [])
+
+
+def nvidia_models(client: httpx.Client, key: str) -> list[str]:
+    """Nemotron chat models from NVIDIA's own catalog (cached ten minutes); the fast Nano
+    models first. Embedding, reranking, safety and vision models are left out."""
+    global _nvidia_list
+    pinned = [_env("NVIDIA_MODEL")] if _env("NVIDIA_MODEL") else []
+    if _nvidia_list[1] and time.monotonic() - _nvidia_list[0] < 600:
+        return pinned + [m for m in _nvidia_list[1] if m not in pinned]
+    try:
+        r = client.get(f"{NVIDIA_BASE}/models", headers={"Authorization": f"Bearer {key}"}, timeout=6.0)
+        ids = [m.get("id", "") for m in (r.json().get("data") or [])] if r.status_code == 200 else []
+    except (httpx.HTTPError, ValueError, AttributeError):
+        ids = []
+    skip = ("embed", "rerank", "reward", "safety", "guard", "vl", "vision", "parse", "ocr", "retriever", "content",
+            "pii", "translate", "audio", "speech", "asr", "tts", "clip", "nemoguard", "topic", "jailbreak")
+    chat = [i for i in ids if "nemotron" in i.lower() and not any(x in i.lower() for x in skip)]
+
+    def rank(i: str) -> tuple:
+        nums = [float(x) for x in re.findall(r"(\d+(?:\.\d+)?)", i.split("/")[-1])[:1]] or [0.0]
+        return ("nano" in i.lower(), "mini" in i.lower(), nums[0])
+    chat.sort(key=rank, reverse=True)
+    models = chat[:2] or [NVIDIA_FALLBACK_MODEL]
+    if ids:
+        _nvidia_list = (time.monotonic(), models)
+    return pinned + [m for m in models if m not in pinned]
 
 
 def generate_json(client: httpx.Client, system: str, prompt: str, schema: dict) -> dict:
@@ -199,7 +243,13 @@ def generate_json(client: httpx.Client, system: str, prompt: str, schema: dict) 
                              lambda t, m=m: _gemini_once(client, k["gemini"], m, system, prompt, schema, t)))
     if "groq" in k:
         gm = _env("GROQ_MODEL") or GROQ_DEFAULT_MODEL
-        attempts.append((f"Groq ({gm})", lambda t, gm=gm: _groq_once(client, k["groq"], gm, system, prompt, schema, t)))
+        attempts.append((f"Groq ({gm})", lambda t, gm=gm: _openai_once(
+            client, GROQ_URL, k["groq"], gm, f"Groq ({gm})", system, prompt, schema, t, True)))
+    if "nvidia" in k:
+        for nm in nvidia_models(client, k["nvidia"])[:2]:
+            attempts.append((f"NVIDIA ({nm})", lambda t, nm=nm: _openai_once(
+                client, f"{NVIDIA_BASE}/chat/completions", k["nvidia"], nm, f"NVIDIA ({nm})",
+                system + " /no_think", prompt, schema, t, False)))
     started, last = time.monotonic(), "the AI service did not answer"
     warm = next((a for a in attempts if a[0] == _working_model), None)
     batches = ([warm], [a for a in attempts if a is not warm]) if warm else (attempts,)

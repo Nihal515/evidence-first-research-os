@@ -52,7 +52,7 @@ export function GuidePage() {
 
       <section className="panel">
         <h2 className="panel-title">Where AI is used</h2>
-        <p className="hint">Three AI agents run on Google Gemini. Each one is followed by plain code that checks what it said before you see it, and each is switched on or off by the project’s AI level, at the server as well as on screen.</p>
+        <p className="hint">Three AI agents run on Google Gemini, with NVIDIA Nemotron and Groq as backups when their keys are set (the first good answer is used, and the model is recorded in the log). Each one is followed by plain code that checks what it said before you see it, and each is switched on or off by the project’s AI level, at the server as well as on screen.</p>
         <dl className="info-list">
           <dt>Planner</dt>
           <dd>Level 1. Add → Search → <b>Suggest search terms with AI</b> turns your research question into five search queries. The searches go to Crossref and OpenAlex, so every result is a real registry record with its own trust label. Code drops any query that contains a DOI.</dd>
