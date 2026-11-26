@@ -41,6 +41,7 @@ projects = Table(
     Column("created_at", DateTime(timezone=True), nullable=False),
     Column("updated_at", DateTime(timezone=True), nullable=False),
     Column("owner_id", String(64), nullable=True, index=True),  # set when a signed-in user owns the project
+    Column("ai_level", Integer, nullable=True),  # 0-3, the assessment's AI rule; NULL = default (see backend/ai.py)
 )
 
 project_references = Table(
@@ -70,6 +71,7 @@ project_references = Table(
     Column("abstract", Text, nullable=True),
     Column("oa_pdf_url", Text, nullable=True),      # free legal copy found by OpenAlex
     Column("oa_info", Text, nullable=True),         # JSON: where the free copy is, which version, when checked
+    Column("ai_reading", Text, nullable=True),      # JSON: the Reader's guarded quotes from the abstract
     Column("pdf_pathname", Text, nullable=True),    # the user's own uploaded PDF (private storage)
     UniqueConstraint("project_id", "doi", name="uq_project_doi"),
 )
@@ -227,22 +229,34 @@ def get_project(engine: Engine, pid: str) -> Optional[dict]:
         row = conn.execute(select(projects).where(projects.c.id == pid)).mappings().first()
     if not row:
         return None
-    return {"id": row["id"], "title": row["title"], "question": row["question"],
-            "created_at": iso(row["created_at"]), "updated_at": iso(row["updated_at"]), "owner_id": row["owner_id"]}
+    return _project_row(row)
+
+
+def _project_row(r) -> dict:
+    from .ai import DEFAULT_LEVEL
+    level = r["ai_level"]
+    return {"id": r["id"], "title": r["title"], "question": r["question"], "created_at": iso(r["created_at"]),
+            "updated_at": iso(r["updated_at"]), "owner_id": r["owner_id"],
+            "ai_level": DEFAULT_LEVEL if level is None else int(level)}
 
 
 def list_owned_projects(engine: Engine, owner_id: str) -> list[dict]:
     with engine.connect() as conn:
         rows = conn.execute(select(projects).where(projects.c.owner_id == owner_id)
                             .order_by(projects.c.updated_at.desc())).mappings().all()
-    return [{"id": r["id"], "title": r["title"], "question": r["question"], "created_at": iso(r["created_at"]),
-             "updated_at": iso(r["updated_at"]), "owner_id": r["owner_id"]} for r in rows]
+    return [_project_row(r) for r in rows]
 
 
 def set_project_owner(engine: Engine, pid: str, owner_id: str) -> None:
     with engine.begin() as conn:
         conn.execute(update(projects).where((projects.c.id == pid) & (projects.c.owner_id.is_(None)))
                      .values(owner_id=owner_id, updated_at=utcnow()))
+
+
+def set_ai_level(engine: Engine, pid: str, level: int) -> Optional[dict]:
+    with engine.begin() as conn:
+        conn.execute(update(projects).where(projects.c.id == pid).values(ai_level=int(level), updated_at=utcnow()))
+    return get_project(engine, pid)
 
 
 def update_project(engine: Engine, pid: str, title: str, question: str) -> Optional[dict]:
@@ -278,6 +292,7 @@ def _ref_row(row) -> dict:
         "abstract": row["abstract"],
         "oa_pdf_url": row["oa_pdf_url"],
         "free_copy": json.loads(row["oa_info"]) if row["oa_info"] else None,
+        "ai_reading": json.loads(row["ai_reading"]) if row["ai_reading"] else None,
         "has_uploaded_pdf": bool(row["pdf_pathname"]),
         "collection_ids": [],
     }
@@ -358,7 +373,8 @@ def get_references(engine: Engine, pid: str, ids: list[str]) -> list[dict]:
 
 def set_reference_fields(engine: Engine, pid: str, ids: list[str], **values) -> int:
     """Update library fields (favorite, read_at, deleted_at, notes, abstract, oa_pdf_url, pdf_pathname)."""
-    allowed = {"favorite", "read_at", "deleted_at", "notes", "abstract", "oa_pdf_url", "oa_info", "pdf_pathname"}
+    allowed = {"favorite", "read_at", "deleted_at", "notes", "abstract", "oa_pdf_url", "oa_info", "pdf_pathname",
+               "ai_reading"}
     values = {k: v for k, v in values.items() if k in allowed}
     if not ids or not values:
         return 0

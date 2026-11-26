@@ -6,6 +6,7 @@ import { apaFor } from "../lib/exportActions";
 import { copyText } from "../lib/exporters";
 import { collectionTree, flattenTree } from "../lib/library";
 import type { Collection, Reference } from "../types";
+import { AiSourceTools } from "./AiAgents";
 import { TrustLabel } from "./TrustLabel";
 
 interface Props {
@@ -15,6 +16,7 @@ interface Props {
   compact: boolean;
   onClose: () => void;
   onChanged: (r?: Reference) => void;
+  aiLevel?: number;
 }
 
 const STATUS_TEXT = { match: "Matches", mismatch: "Does not match", not_provided: "Not entered" } as const;
@@ -28,7 +30,7 @@ const RETRACTION: Record<string, { text: string; cls: string }> = {
 
 const capital = (t: string) => t.charAt(0).toUpperCase() + t.slice(1);
 
-export function DetailPanel({ projectId, reference: r, collections, compact, onClose, onChanged }: Props) {
+export function DetailPanel({ projectId, reference: r, collections, compact, onClose, onChanged, aiLevel = 3 }: Props) {
   const [notes, setNotes] = useState(r.notes);
   const [notesState, setNotesState] = useState<"" | "saving" | "saved">("");
   const [busy, setBusy] = useState<string | null>(null);
@@ -159,6 +161,13 @@ export function DetailPanel({ projectId, reference: r, collections, compact, onC
             </button>
           )}
         </section>
+
+        {!trashed && (
+          <section className="detail-section">
+            <h4>AI help <span className="hint small">· AI suggestions, checked by code</span></h4>
+            <AiSourceTools projectId={projectId} reference={r} aiLevel={aiLevel} onChanged={onChanged} />
+          </section>
+        )}
 
         {!trashed && r.label === "verified" && r.doi && (
           <section className="detail-section">

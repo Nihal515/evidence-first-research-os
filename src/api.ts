@@ -1,5 +1,8 @@
 import { getToken } from "./auth";
 import type {
+  AiClaimCheck,
+  AiSearchTerms,
+  AiStatus,
   AuditEvent,
   BulkAction,
   CheckInput,
@@ -112,6 +115,13 @@ export const api = {
   /** Check without a project: nothing is saved. */
   publicCheck: (input: CheckInput) => request<CheckResult & { retraction?: Retraction | null }>("/api/check", json(input)),
   lab: () => request<LabCorpus>("/api/lab"),
+  // AI agents (labelled "AI suggestion"; each is refused at the server above the project's AI level)
+  aiStatus: () => request<AiStatus>("/api/ai"),
+  setAiLevel: (id: string, level: number) => request<Project>(`/api/projects/${id}/ai-level`, { method: "PUT", body: JSON.stringify({ level }) }),
+  aiSearchTerms: (id: string, question = "") => request<AiSearchTerms>(`/api/projects/${id}/ai/search-terms`, json({ question })),
+  aiRead: (id: string, rid: string, refresh = false) =>
+    request<Reference>(`/api/projects/${id}/references/${rid}/ai/read${refresh ? "?refresh=true" : ""}`, { method: "POST" }),
+  aiClaim: (id: string, rid: string, claim: string) => request<AiClaimCheck>(`/api/projects/${id}/references/${rid}/ai/claim`, json({ claim })),
   labRun: (caseId: string) => request<LabRun>(`/api/lab/run?case_id=${encodeURIComponent(caseId)}`, { method: "POST" }),
   approve: (id: string, input: CheckInput, collectionId?: string | null) =>
     request<Reference>(`/api/projects/${id}/references`, json(collectionId ? { ...input, collection_id: collectionId } : input)),

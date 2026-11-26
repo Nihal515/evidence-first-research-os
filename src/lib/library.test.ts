@@ -12,7 +12,7 @@ function ref(p: Partial<Reference> & { id: string; title: string }): Reference {
     label: "verified", reason: "", doi: null, authors: [], year: null, container: "", provider: "", csl: null, checks: [],
     retraction: { status: "none_found" }, user_input: {}, checked_at: "2026-11-25T10:00:00Z",
     approved_at: "2026-11-24T10:00:00Z", favorite: false, read_at: null, deleted_at: null, notes: "", abstract: null,
-    oa_pdf_url: null, free_copy: null, has_uploaded_pdf: false, collection_ids: [], ...p,
+    oa_pdf_url: null, free_copy: null, has_uploaded_pdf: false, collection_ids: [], ai_reading: null, ...p,
   };
 }
 

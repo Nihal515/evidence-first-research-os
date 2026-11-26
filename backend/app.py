@@ -12,6 +12,7 @@ from fastapi import FastAPI, HTTPException, Path, Query, Request
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 
+from . import ai
 from . import auth
 from . import db
 from . import keycheck
@@ -719,7 +720,146 @@ def summary(pid: str = Path(pattern=ID)):
         "approvals": sum(1 for e in events if e["event"] == "REFERENCE_APPROVED"),
         "exports": sum(1 for e in events if e["event"].startswith("EXPORT_")),
         "ai_runs": sum(1 for e in events if e["actor"] == "ai"),
+        "ai_features": {"search_terms": sum(1 for e in events if e["event"] == "AI_SEARCH_TERMS_SUGGESTED"),
+                        "readings": sum(1 for e in events if e["event"] == "AI_ABSTRACT_READ"),
+                        "claim_checks": sum(1 for e in events if e["event"] == "AI_CLAIM_CHECKED")},
+        "ai_models": sorted({e["detail"].get("model") for e in events if e["actor"] == "ai" and e["detail"].get("model")}),
+        "ai_level": project.get("ai_level"),
         "first_activity": events[0]["ts"] if events else None,
         "last_activity": events[-1]["ts"] if events else None,
         "generated_at": now_iso(),
     }
+
+
+# ------------------------------------------------------------------ AI agents (Gemini)
+class AiLevelIn(BaseModel):
+    level: int = Field(ge=0, le=3)
+
+
+class SearchTermsIn(BaseModel):
+    question: str = Field(default="", max_length=1500)
+
+
+class ClaimIn(BaseModel):
+    claim: str = Field(min_length=8, max_length=1000)
+
+
+@app.get("/api/ai")
+def ai_status():
+    """Whether AI is set up, and the levels and agents. The key itself is never sent."""
+    return {"configured": ai.configured(), "model": ai.model_label(), "default_level": ai.DEFAULT_LEVEL,
+            "levels": [{"level": k, "name": v} for k, v in ai.LEVELS.items()],
+            "agents": [{"id": a, "name": ai.AGENT_NAME[a], "min_level": lvl} for a, lvl in ai.AGENT_LEVEL.items()]}
+
+
+@app.put("/api/projects/{pid}/ai-level")
+def set_ai_level(body: AiLevelIn, pid: str = Path(pattern=ID)):
+    """The assessment's AI rule. Agents above this level are refused here, at the server."""
+    engine = require_db()
+    require_project(engine, pid)
+    project = db.set_ai_level(engine, pid, body.level)
+    db.log(engine, pid, "user", "AI_LEVEL_SET", {"level": body.level, "name": ai.LEVELS[body.level]})
+    return public_project(project)
+
+
+def require_agent(project: dict, agent: str) -> None:
+    need, level = ai.AGENT_LEVEL[agent], project.get("ai_level", ai.DEFAULT_LEVEL)
+    if level < need:
+        raise HTTPException(403, f"This project's AI level is {level} ({ai.LEVELS[level]}). {ai.AGENT_NAME[agent]} needs "
+                                 f"level {need} ({ai.LEVELS[need]}). Change it on the Project page if your assessment allows.")
+    if not ai.configured():
+        raise HTTPException(503, "AI is not set up on this server yet (no LLM_API_KEY).")
+
+
+def _ai_error(exc: ai.AIUnavailable) -> HTTPException:
+    return HTTPException(503, str(exc) or "The AI could not answer. Nothing was changed.")
+
+
+@app.post("/api/projects/{pid}/ai/search-terms")
+def ai_search_terms(body: SearchTermsIn, pid: str = Path(pattern=ID)):
+    """Planner: AI suggests search queries; the searches still go to Crossref and OpenAlex."""
+    engine = require_db()
+    project = require_project(engine, pid)
+    require_agent(project, "planner")
+    question = body.question.strip() or project["question"] or project["title"]
+    if len(question) < 4:
+        raise HTTPException(400, "Write your research question first (on the Project page or here).")
+    with providers.make_client() as client:
+        try:
+            queries = ai.suggest_search_terms(client, question, project["title"])
+        except ai.AIUnavailable as exc:
+            raise _ai_error(exc)
+    model = ai.model_label()
+    db.log(engine, pid, "ai", "AI_SEARCH_TERMS_SUGGESTED",
+           {"agent": "Planner", "model": model, "question": question[:300], "queries": [q["query"] for q in queries]})
+    return {"label": "ai_suggestion", "agent": "Planner", "model": model, "question": question, "queries": queries,
+            "generated_at": now_iso()}
+
+
+def _abstract_for(engine, pid: str, ref: dict) -> str:
+    """The abstract on record, or fetched from OpenAlex once and kept."""
+    if ref.get("abstract"):
+        return ref["abstract"]
+    if not ref.get("doi"):
+        return ""
+    with providers.make_client() as client:
+        free, abstract = openaccess.find_free_copy(client, ref["doi"])
+    if free.get("status") in ("found", "none"):
+        _store_free_copy(engine, pid, ref["id"], free, abstract)
+    return abstract or ""
+
+
+def _ai_source(engine, pid: str, rid: str) -> tuple[dict, str]:
+    ref = require_reference(engine, pid, rid)
+    if ref.get("deleted_at"):
+        raise HTTPException(409, "This reference is in Trash.")
+    if ref["label"] != VERIFIED:
+        raise HTTPException(409, "AI reads only Verified sources, so it never works from a reference that may not exist.")
+    abstract = _abstract_for(engine, pid, ref)
+    if len(abstract) < 80:
+        raise HTTPException(409, "OpenAlex has no abstract for this paper, so there is nothing for the AI to read. "
+                                 "Open the article on doi.org to read it yourself.")
+    return ref, abstract
+
+
+@app.post("/api/projects/{pid}/references/{rid}/ai/read")
+def ai_read(pid: str = Path(pattern=ID), rid: str = Path(pattern=ID), refresh: bool = Query(default=False)):
+    """Reader: AI points at sentences of the abstract; the quote guard keeps only exact quotes."""
+    engine = require_db()
+    project = require_project(engine, pid)
+    require_agent(project, "reader")
+    ref, abstract = _ai_source(engine, pid, rid)
+    if ref.get("ai_reading") and not refresh:
+        return ref
+    with providers.make_client() as client:
+        try:
+            reading = ai.read_abstract(client, ref["title"], abstract)
+        except ai.AIUnavailable as exc:
+            raise _ai_error(exc)
+    model = ai.model_label()
+    reading.update(label="ai_suggestion", agent="Reader", model=model, generated_at=now_iso(),
+                   source="abstract (OpenAlex)")
+    db.set_reference_fields(engine, pid, [rid], ai_reading=json.dumps(reading))
+    db.log(engine, pid, "ai", "AI_ABSTRACT_READ", {"agent": "Reader", "model": model, "reference_id": rid,
+                                                   "quotes_kept": reading["kept"], "quotes_discarded": reading["dropped"]})
+    return db.get_reference(engine, pid, rid)
+
+
+@app.post("/api/projects/{pid}/references/{rid}/ai/claim")
+def ai_claim(body: ClaimIn, pid: str = Path(pattern=ID), rid: str = Path(pattern=ID)):
+    """Challenger: does this source's abstract support the student's sentence? Guarded by code."""
+    engine = require_db()
+    project = require_project(engine, pid)
+    require_agent(project, "challenger")
+    ref, abstract = _ai_source(engine, pid, rid)
+    with providers.make_client() as client:
+        try:
+            result = ai.check_claim(client, body.claim.strip(), ref["title"], abstract)
+        except ai.AIUnavailable as exc:
+            raise _ai_error(exc)
+    model = ai.model_label()
+    db.log(engine, pid, "ai", "AI_CLAIM_CHECKED", {"agent": "Challenger", "model": model, "reference_id": rid,
+                                                   "claim": body.claim.strip()[:300], "verdict": result["verdict"],
+                                                   "quote_ok": result["quote_ok"]})
+    return {**result, "label": "ai_suggestion", "agent": "Challenger", "model": model, "claim": body.claim.strip(),
+            "reference_id": rid, "source": "abstract (OpenAlex)", "generated_at": now_iso()}

@@ -6,6 +6,7 @@ export interface Project {
   question: string;
   created_at: string;
   updated_at: string;
+  ai_level: number;        // 0-3: the assessment's AI rule, enforced at the server
   owned?: boolean;         // saved to an account
   owned_by_you?: boolean;  // saved to the signed-in account
 }
@@ -90,6 +91,7 @@ export interface Reference {
   free_copy: FreeCopy | null;
   has_uploaded_pdf: boolean;
   collection_ids: string[];
+  ai_reading: AiReading | null;
 }
 
 export interface FreeCopy {
@@ -134,6 +136,9 @@ export interface Summary {
   approvals: number;
   exports: number;
   ai_runs: number;
+  ai_features?: { search_terms: number; readings: number; claim_checks: number };
+  ai_models?: string[];
+  ai_level?: number;
   first_activity: string | null;
   last_activity: string | null;
   generated_at: string;
@@ -175,4 +180,48 @@ export interface LabRun extends Partial<Omit<CheckResult, "label">> {
   label: Label | null;
   retraction?: Retraction | null;
   evaluation: { outcome: LabOutcome; text: string; limited_coverage: boolean };
+}
+
+// ------------------------------------------------------------------ AI agents
+export interface AiReading {
+  label: "ai_suggestion";
+  agent: "Reader";
+  model: string;
+  sections: { aim: string[]; method: string[]; findings: string[]; limits: string[] };
+  kept: number;
+  dropped: number;
+  source: string;
+  generated_at: string;
+}
+
+export interface AiSearchTerms {
+  label: "ai_suggestion";
+  agent: "Planner";
+  model: string;
+  question: string;
+  queries: { query: string; why: string }[];
+  generated_at: string;
+}
+
+export interface AiClaimCheck {
+  label: "ai_suggestion";
+  agent: "Challenger";
+  model: string;
+  claim: string;
+  verdict: "supported" | "contradicted" | "not_addressed" | "discarded";
+  quote: string;
+  quote_ok: boolean;
+  numbers: { ok: boolean; text: string } | null;
+  explanation: string;
+  guard: string;
+  source: string;
+  generated_at: string;
+}
+
+export interface AiStatus {
+  configured: boolean;
+  model: string;
+  default_level: number;
+  levels: { level: number; name: string }[];
+  agents: { id: string; name: string; min_level: number }[];
 }

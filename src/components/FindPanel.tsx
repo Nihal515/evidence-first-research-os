@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { api, ApiError } from "../api";
 import type { SearchResponse } from "../types";
+import { PlannerChips } from "./AiAgents";
 import { RecordDetails } from "./RecordDetails";
 import { TrustLabel } from "./TrustLabel";
 
@@ -8,9 +9,10 @@ interface Props {
   projectId: string;
   onAdded: () => void;
   collectionId?: string | null;
+  aiLevel?: number;
 }
 
-export function FindPanel({ projectId, onAdded, collectionId }: Props) {
+export function FindPanel({ projectId, onAdded, collectionId, aiLevel = 3 }: Props) {
   const [q, setQ] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
@@ -18,13 +20,13 @@ export function FindPanel({ projectId, onAdded, collectionId }: Props) {
   const [adding, setAdding] = useState<string | null>(null);
   const [added, setAdded] = useState<Record<string, string>>({});
 
-  async function search(e: React.FormEvent) {
-    e.preventDefault();
-    if (q.trim().length < 2) return;
+  async function search(e?: React.FormEvent, query = q) {
+    e?.preventDefault();
+    if (query.trim().length < 2) return;
     setBusy(true);
     setError("");
     try {
-      setRes(await api.search(projectId, q.trim()));
+      setRes(await api.search(projectId, query.trim()));
     } catch (err) {
       setError(err instanceof ApiError ? err.message : "Search failed.");
     } finally {
@@ -51,6 +53,7 @@ export function FindPanel({ projectId, onAdded, collectionId }: Props) {
     <div className="panel">
       <h2>Search scholarly databases</h2>
       <p className="hint">Results are live scholarly records. Nothing is added to your library until you approve it.</p>
+      <PlannerChips projectId={projectId} aiLevel={aiLevel} onPick={(term) => { setQ(term); search(undefined, term); }} />
       <form onSubmit={search} className="search-row" role="search">
         <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Topic, title or author" aria-label="Search scholarly records" maxLength={300} />
         <button className="btn-primary" disabled={busy || q.trim().length < 2}>{busy ? "Searching…" : "Search"}</button>

@@ -17,7 +17,7 @@ const STEPS = [
   },
   {
     title: "1. Find real papers",
-    body: "Add → Search asks Crossref and OpenAlex live. Results are labelled before you see them, and nothing is added yet.",
+    body: "Add → Search asks Crossref and OpenAlex live, and AI can suggest search terms from your question. Results are labelled before you see them, and nothing is added yet.",
   },
   {
     title: "2. Check what you already have",
@@ -32,8 +32,8 @@ const STEPS = [
     body: "The reference list is built from the registry record, not from your typing. Copy it or download it as a file.",
   },
   {
-    title: "5. Declare your AI use",
-    body: "The AI-use statement is written from the project's own log, ready to paste into your assignment.",
+    title: "5. Let AI read, then declare it",
+    body: "AI quotes a source's aim, method and findings, and tests your sentences against it; code throws away any quote that is not in the source. The AI-use statement lists every AI run, ready to paste.",
   },
 ];
 

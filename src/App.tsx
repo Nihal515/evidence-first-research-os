@@ -4,6 +4,7 @@ import { api, ApiError, type Me } from "./api";
 import { onAuthChange, restoreSession, signOut } from "./auth";
 import { AddDialog } from "./components/AddDialog";
 import { DetailPanel } from "./components/DetailPanel";
+import { AiDial } from "./components/AiAgents";
 import { DuplicatesView } from "./components/DuplicatesView";
 import { GuidePage, RulesPage } from "./components/InfoPages";
 import { LabPage } from "./components/LabPage";
@@ -585,6 +586,7 @@ export default function App({ route = "/home" }: { route?: string }) {
                 </>
               )}
             </section>
+            <AiDial project={project} onProject={onProject} />
             <ProjectPanel key={project.id} project={project} onProject={onProject} onNewProject={newProject} />
             {storedProjects().filter((x) => x.id !== project.id).length > 0 && (
               <section className="panel">
@@ -603,7 +605,7 @@ export default function App({ route = "/home" }: { route?: string }) {
 
       {page === "library" && active && (
         <DetailPanel projectId={project.id} reference={active} collections={collections} compact={compact}
-          onClose={() => setActiveId(null)} onChanged={onDetailChanged} />
+          aiLevel={project.ai_level} onClose={() => setActiveId(null)} onChanged={onDetailChanged} />
       )}
 
       {compact && drawer && (
@@ -617,10 +619,11 @@ export default function App({ route = "/home" }: { route?: string }) {
 
       {addOpen && (
         <AddDialog projectId={project.id} collection={currentCollection} onClose={() => setAddOpen(false)}
-          onAdded={() => reload(project.id)} />
+          aiLevel={project.ai_level} onAdded={() => reload(project.id)} />
       )}
       {checkOpen && !addOpen && (
         <AddDialog projectId={project.id} collection={currentCollection} initialTab={checkOpen.tab} initialText={checkOpen.text}
+          aiLevel={project.ai_level}
           onClose={() => { setCheckOpen(null); if (window.location.pathname === "/check") go("/home"); }}
           onAdded={() => reload(project.id)} />
       )}

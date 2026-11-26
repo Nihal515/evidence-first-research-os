@@ -52,7 +52,16 @@ export function GuidePage() {
 
       <section className="panel">
         <h2 className="panel-title">Where AI is used</h2>
-        <p className="hint">Nowhere in this version. No AI model decides whether a reference is real, writes a reference, or adds anything to your library. AI helpers are planned as a later stage; when they arrive, anything they write will carry the AI suggestion label until a source is checked behind it.</p>
+        <p className="hint">Three AI agents run on Google Gemini. Each one is followed by plain code that checks what it said before you see it, and each is switched on or off by the project’s AI level, at the server as well as on screen.</p>
+        <dl className="info-list">
+          <dt>Planner</dt>
+          <dd>Level 1. Add → Search → <b>Suggest search terms with AI</b> turns your research question into five search queries. The searches go to Crossref and OpenAlex, so every result is a real registry record with its own trust label. Code drops any query that contains a DOI.</dd>
+          <dt>Reader</dt>
+          <dd>Level 2. In a Verified source’s details, <b>Read the abstract with AI</b> points at the sentences that state the aim, method, findings and limits. The quote guard (code) keeps a quote only if it appears word for word in the abstract and discards the rest.</dd>
+          <dt>Challenger</dt>
+          <dd>Level 3. <b>Check my sentence</b> asks whether the source’s abstract supports something you wrote. Its quote must pass the quote guard, and code compares the numbers in your sentence with the numbers in the source: if they differ, code overrules the AI.</dd>
+        </dl>
+        <p className="hint">What AI never does: decide whether a reference is real, write a reference, add anything to your library, or write your assignment. Every AI output carries the <b>AI suggestion</b> label, and every AI run is recorded in the activity log, so the AI-use statement lists it.</p>
       </section>
     </div>
   );
@@ -95,6 +104,8 @@ export function RulesPage() {
           <li>A Not found reference can never be added. A Not yet verified one keeps its label until it is checked again.</li>
           <li>Deleting moves a source to Trash first. Removing it for good is a separate step.</li>
           <li>Guest projects work without an account. Sign in to keep a library private to you and use it on any device.</li>
+          <li>The AI level (0–3) on the Project page sets which AI agents may run. Agents above it are refused by the server.</li>
+          <li>AI reads only Verified sources, and only their abstracts. An AI quote that is not word for word in the source is thrown away.</li>
         </ul>
       </section>
     </div>

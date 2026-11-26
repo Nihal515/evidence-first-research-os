@@ -412,7 +412,7 @@ export default function Landing() {
               <p className={css.say} aria-live="polite">
                 {broke ? 'Disputed. The source says 13%, so the trail breaks here.' : 'Supported. The number and the direction hold, so the trail runs unbroken to the registry.'}
               </p>
-              <p className={css.small}>Illustration. Claim tracing comes with the agents stage; today the workspace checks references.</p>
+              <p className={css.small}>Illustration. In the workspace, the Challenger tests your own sentence against a source’s abstract, and code compares the numbers.</p>
             </div>
           </div>
         </section>
@@ -443,7 +443,7 @@ export default function Landing() {
                   );
                 })}
               </ul>
-              <p className={css.small}>Square lights are plain code and always on. Round lights are AI. No level writes your assignment. Preview: in this workspace today, Scout, Checker and Clerk are built and no AI agent runs.</p>
+              <p className={css.small}>Square lights are plain code and always on. Round lights are AI. No level writes your assignment. In the workspace today the dial is on the Project page; Analyst and Reviewer are still planned.</p>
             </div>
           </div>
         </section>

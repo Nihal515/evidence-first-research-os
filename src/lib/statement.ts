@@ -45,8 +45,16 @@ export function buildStatement(s: Summary, when: Date = new Date()): string {
   if (s.ai_runs === 0) {
     sentences.push("No generative AI was used through this tool to write, summarise or paraphrase any text.");
   } else {
+    const f = s.ai_features ?? { search_terms: 0, readings: 0, claim_checks: 0 };
+    const uses: string[] = [];
+    if (f.search_terms) uses.push(`to suggest search terms ${times(f.search_terms)}`);
+    if (f.readings) uses.push(`to point at the aim, method, findings and limits in ${plural(f.readings, "source abstract")}`);
+    if (f.claim_checks) uses.push(`to test ${plural(f.claim_checks, "of my sentences", "of my sentences")} against source abstracts`);
+    const model = s.ai_models?.length ? ` (${list(s.ai_models)})` : "";
     sentences.push(
-      `Generative AI features of the tool were used ${times(s.ai_runs)}; each AI output was labelled “AI suggestion” until it was checked against a source.`,
+      `I used the tool’s generative AI${model} ${uses.length ? list(uses) : `${times(s.ai_runs)}`}. ` +
+        "Every AI output was labelled “AI suggestion”; quotes were kept only if they appeared word for word in the source, " +
+        "and the AI did not decide which sources were real, add any source, or write the text of this work.",
     );
   }
 
