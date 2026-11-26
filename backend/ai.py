@@ -250,7 +250,8 @@ def nvidia_models(client: httpx.Client, key: str) -> list[str]:
         low = i.lower()
         nums = [float(x) for x in re.findall(r"(\d+(?:\.\d+)?)", i.split("/")[-1])[:1]] or [0.0]
         slow = "reasoning" in low or "omni" in low or "thinking" in low
-        return (not slow, "nano" in low or "mini" in low, nums[0])
+        size = next((int(x) for x in re.findall(r"(\d+)b", low.split("/")[-1])), 0)  # parameters, in billions
+        return (not slow, 8 <= size <= 80, size, nums[0])  # mid-size instruct models: good answers, quickly
     chat.sort(key=rank, reverse=True)
     models = chat[:2] or [NVIDIA_FALLBACK_MODEL]
     if ids:
@@ -309,7 +310,10 @@ def generate_json(client: httpx.Client, system: str, prompt: str, schema: dict) 
         raise AIUnavailable("AI is not set up on this server (no AI key).")
     attempts: list[tuple[str, object]] = []  # (label, callable(timeout))
     if "gemini" in k:
-        for m in _gemini_models(client, k["gemini"]):
+        gem = _gemini_models(client, k["gemini"])
+        if "groq" in k or "nvidia" in k:  # with backups, ask fewer Gemini models so its free quota lasts
+            gem = [m for m in gem if "lite" not in m][:2] + [m for m in gem if "lite" in m][:1]
+        for m in gem:
             attempts.append((f"Google Gemini ({m})",
                              lambda t, m=m: _gemini_once(client, k["gemini"], m, system, prompt, schema, t)))
     if "groq" in k:
@@ -317,7 +321,7 @@ def generate_json(client: httpx.Client, system: str, prompt: str, schema: dict) 
             attempts.append((f"Groq ({gm})", lambda t, gm=gm: _openai_once(
                 client, GROQ_URL, k["groq"], gm, f"Groq ({gm})", system, prompt, schema, t, True)))
     if "nvidia" in k:
-        for nm in nvidia_models(client, k["nvidia"])[:2]:
+        for nm in nvidia_models(client, k["nvidia"])[:1]:
             attempts.append((f"NVIDIA ({nm})", lambda t, nm=nm: _openai_once(
                 client, f"{NVIDIA_BASE}/chat/completions", k["nvidia"], nm, f"NVIDIA ({nm})",
                 system + " /no_think", prompt, schema, t, False)))
