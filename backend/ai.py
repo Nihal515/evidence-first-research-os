@@ -86,7 +86,8 @@ def _gemini_candidates(client: httpx.Client, key: str) -> list[str]:
                  if "generateContent" in (m.get("supportedGenerationMethods") or [])] if r.status_code == 200 else []
     except (httpx.HTTPError, ValueError):
         names = []
-    skip = ("image", "tts", "audio", "live", "embedding", "8b", "exp", "thinking", "native", "robotics", "computer")
+    skip = ("image", "tts", "audio", "live", "embedding", "8b", "exp", "thinking", "native", "robotics", "computer",
+            "gemini-2.5-flash", "gemini-2.0", "gemini-1.")  # 2.5 Flash and older are retired for new keys
     flash = [n for n in names if "flash" in n and not any(s in n for s in skip)]
 
     def version(n: str) -> tuple:
@@ -97,7 +98,7 @@ def _gemini_candidates(client: httpx.Client, key: str) -> list[str]:
     for n in first + (flash or [GEMINI_DEFAULT_MODEL]):
         if n not in out:
             out.append(n)
-    return out[:6]
+    return out[:8]
 
 
 def _gemini_once(client: httpx.Client, key: str, model: str, body: dict, timeout: float) -> tuple[str, object]:
@@ -135,8 +136,9 @@ def _gemini_once(client: httpx.Client, key: str, model: str, body: dict, timeout
 
 
 def _gemini(client: httpx.Client, key: str, system: str, prompt: str, schema: dict) -> dict:
-    """Ask up to three Flash models at once and take the first good answer: on the free
-    tier one model is often overloaded while another answers in a few seconds."""
+    """Ask the Flash models at once and take the first good answer: on the free tier
+    several models are often overloaded while another answers in a few seconds. A warm
+    server first asks the model that answered last time, on its own."""
     global _working_model
     body = {
         "systemInstruction": {"parts": [{"text": system}]},
@@ -146,14 +148,17 @@ def _gemini(client: httpx.Client, key: str, system: str, prompt: str, schema: di
     }
     started, last = time.monotonic(), "the AI service did not answer"
     models = _gemini_candidates(client, key)
-    for batch in (models[:3], models[3:6]):
+    warm = _working_model if _working_model in models else None
+    batches = ([warm], [m for m in models if m != warm]) if warm else (models,)
+    for n, batch in enumerate(batches):
         left = DEADLINE - (time.monotonic() - started)
         if not batch or left < 5:
             break
         pool = ThreadPoolExecutor(max_workers=len(batch))
-        futures = {pool.submit(_gemini_once, client, key, m, body, min(14.0, left)): m for m in batch}
+        wait = min(8.0 if warm and n == 0 else 16.0, left)
+        futures = {pool.submit(_gemini_once, client, key, m, body, wait): m for m in batch}
         try:
-            for fut in as_completed(futures, timeout=left):
+            for fut in as_completed(futures, timeout=wait + 1):
                 status, value = fut.result()
                 if status == "ok":
                     _working_model = futures[fut]
