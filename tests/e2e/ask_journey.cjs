@@ -91,6 +91,7 @@ async function run(mobile) {
   await page.locator('#step-clerk .notice').waitFor();
   ok(`${tag}: APA 7 list copied`, /Copied/i.test(await page.locator('#step-clerk .notice').textContent()));
   await shot('04-done', true);
+  await page.locator('.flow-panel').screenshot({ path: `${OUT}/shots/ask-${tag}-flow-done.png` });
   await page.evaluate(() => window.scrollTo(0, 0));
   await shot('05-flow');
   await page.getByRole('button', { name: 'Open the AI-use statement' }).click().catch(async () => {
@@ -104,7 +105,7 @@ async function run(mobile) {
 }
 
 (async () => {
-  try { await run(false); await run(true); } catch (e) { ok('journey completed', false, String(e).slice(0, 400)); }
+  try { if (process.env.ONLY !== 'phone') await run(false); if (process.env.ONLY !== 'desktop') await run(true); } catch (e) { ok('journey completed', false, String(e).slice(0, 400)); }
   const f = res.filter((r) => r.startsWith('FAIL')).length;
   console.log(`\n${res.length - f}/${res.length} passed`);
   process.exit(f ? 1 : 0);
