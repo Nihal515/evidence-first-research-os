@@ -443,7 +443,7 @@ export default function Landing() {
                   );
                 })}
               </ul>
-              <p className={css.small}>Square lights are plain code and always on. Round lights are AI. No level writes your assignment. In the workspace today the dial is on the Project page; Analyst and Reviewer are still planned.</p>
+              <p className={css.small}>Square lights are plain code and always on. Round lights are AI. No level writes your assignment. In the workspace, Ask runs all nine in order and stops for you at each checkpoint; the dial is on the Project page.</p>
             </div>
           </div>
         </section>

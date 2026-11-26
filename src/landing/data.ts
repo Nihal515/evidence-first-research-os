@@ -19,11 +19,11 @@ export const AGENTS: { id: string; name: string; kind: AgentKind; minLevel: numb
   { id: "planner", name: "Planner", kind: "ai", minLevel: 1, built: true }, // AI search terms
   { id: "scout", name: "Scout", kind: "code", minLevel: 0, built: true }, // search: Crossref and OpenAlex
   { id: "checker", name: "Checker", kind: "code", minLevel: 0, built: true }, // field-by-field check
-  { id: "analyst", name: "Analyst", kind: "code", minLevel: 0, built: false },
+  { id: "analyst", name: "Analyst", kind: "code", minLevel: 0, built: true }, // TF-IDF ranking, sentence sorting
   { id: "reader", name: "Reader", kind: "ai", minLevel: 2, built: true }, // AI quotes from the abstract
   { id: "quote-guard", name: "Quote guard", kind: "code", minLevel: 0, built: true }, // exact-quote check
   { id: "challenger", name: "Challenger", kind: "ai", minLevel: 3, built: true }, // claim vs abstract
-  { id: "reviewer", name: "Reviewer", kind: "code", minLevel: 0, built: false },
+  { id: "reviewer", name: "Reviewer", kind: "code", minLevel: 0, built: true }, // what a marker could question
   { id: "clerk", name: "Clerk", kind: "code", minLevel: 0, built: true }, // APA 7 list and AI-use statement
 ];
 

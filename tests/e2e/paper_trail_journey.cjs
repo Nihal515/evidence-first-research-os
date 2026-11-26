@@ -62,7 +62,7 @@ async function run(mobile) {
   // claim demo and dial still work
   await page.getByRole('button', { name: '13%' }).click();
   ok(`${tag}: claim demo switches to Supported`, ((await page.locator('p[aria-live]').filter({ hasText: 'Supported' }).count()) > 0));
-  ok(`${tag}: dial marks unbuilt agents as planned`, (await page.getByText('Analyst (planned)').count()) === 1 && (await page.getByText('Planner (planned)').count()) === 0);
+  ok(`${tag}: dial shows all nine agents built`, (await page.getByText(/\(planned\)/).count()) === 0 && (await page.getByText('Analyst', { exact: true }).count()) === 1);
 
   // tour from the landing page
   await page.getByRole('button', { name: 'Play the 60-second tour' }).click();

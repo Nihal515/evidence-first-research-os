@@ -41,6 +41,8 @@ export function GuidePage() {
           <dd>Add → Search sends your words to Crossref (and OpenAlex as a backup). Each result is labelled before you see it. Nothing is added by searching.</dd>
           <dt>Check</dt>
           <dd>Add → Check takes one reference, typed in fields or pasted as text. Add → Import takes a whole list, a BibTeX file or a RIS file, and checks each line.</dd>
+          <dt>Ask</dt>
+          <dd>Type your question and requirements once and nine agents run in order, drawn as a live flow: Planner (AI) suggests search terms and you approve them; Scout searches; Checker verifies each record and looks for retractions; Analyst (plain code) ranks by relevance and sorts each abstract's sentences; you choose the sources to keep; Reader (AI) quotes them; the Quote guard keeps only exact quotes; Challenger (AI) tests your claims; Reviewer lists what a marker could question; Clerk prepares the APA 7 list and the statement.</dd>
           <dt>Your paper</dt>
           <dd>Upload your draft (Word .docx, PDF, .odt, .txt or .md). It is read in your browser and never uploaded. Code finds the reference list and every in-text citation, shows citations missing from the list and references never cited, checks each reference live, and lets you add the real ones to your library. The Challenger can then test each citing sentence.</dd>
           <dt>Approve</dt>
