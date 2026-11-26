@@ -14,7 +14,7 @@ export function buildStatement(s: Summary, when: Date = new Date()): string {
   const sentences: string[] = [];
   const project = s.project.title ? ` for “${s.project.title}”` : "";
 
-  sentences.push(`I used Evidence-First Research OS, a research-assistant website, while preparing this work${project}.`);
+  sentences.push(`I used Paper Trail, a research-assistant website, while preparing this work${project}.`);
 
   if (s.searches > 0) {
     const where = s.search_providers.length ? list(s.search_providers) : "scholarly databases";

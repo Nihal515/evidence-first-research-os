@@ -1,7 +1,7 @@
 import { FileUp } from "lucide-react";
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { api, ApiError } from "../api";
-import { importInput, parseImport, type ImportedItem } from "../lib/citations";
+import { importInput, parseImport, parsePlainList, type ImportedItem } from "../lib/citations";
 import type { CheckResult } from "../types";
 import { TrustLabel } from "./TrustLabel";
 
@@ -9,6 +9,7 @@ interface Props {
   projectId: string;
   onAdded: () => void;
   collectionId?: string | null;
+  initialText?: string; // a list handed over from the landing page or the Check link
 }
 
 interface Row {
@@ -23,9 +24,10 @@ const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
 /** Import from Mendeley, Zotero, EndNote or Google Scholar (BibTeX / RIS). Every
  * item is checked live; nothing is added until you approve it. */
-export function ImportPanel({ projectId, onAdded, collectionId }: Props) {
+export function ImportPanel({ projectId, onAdded, collectionId, initialText = "" }: Props) {
   const [rows, setRows] = useState<Row[]>([]);
   const [fileName, setFileName] = useState("");
+  const [pasted, setPasted] = useState(initialText);
   const [error, setError] = useState("");
   const [running, setRunning] = useState(false);
   const stop = useRef(false);
@@ -44,6 +46,21 @@ export function ImportPanel({ projectId, onAdded, collectionId }: Props) {
     setRows(items.slice(0, MAX_ITEMS).map((item) => ({ item, state: "waiting" })));
     if (items.length > MAX_ITEMS) setError(`Only the first ${MAX_ITEMS} of ${items.length} references were loaded.`);
   }
+
+  function loadPasted(text: string) {
+    setError("");
+    const items = parsePlainList(text);
+    if (!items.length) return setError("No references found. Put one reference, DOI or title per line.");
+    setFileName("");
+    setRows(items.slice(0, MAX_ITEMS).map((item) => ({ item, state: "waiting" })));
+    if (items.length > MAX_ITEMS) setError(`Only the first ${MAX_ITEMS} of ${items.length} references were loaded.`);
+  }
+
+  // a handed-over list loads straight away; the person still presses Check
+  useEffect(() => {
+    if (initialText.trim()) loadPasted(initialText);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   async function checkAll() {
     setRunning(true);
@@ -95,7 +112,7 @@ export function ImportPanel({ projectId, onAdded, collectionId }: Props) {
 
   return (
     <div className="panel">
-      <h2>Import from another reference manager</h2>
+      <h2>Import or paste a list</h2>
       <p className="hint">
         Export your library from Mendeley, Zotero, EndNote or Google Scholar as <b>BibTeX (.bib)</b> or <b>RIS (.ris)</b>.
         Each reference is checked live — a made-up one is labelled Not found and cannot be added. Nothing is added until you approve it.
@@ -105,6 +122,14 @@ export function ImportPanel({ projectId, onAdded, collectionId }: Props) {
         <span>{fileName ? `Loaded ${fileName} · choose another file` : "Choose a .bib or .ris file"}</span>
         <input type="file" accept=".bib,.ris,.txt,.bibtex" onChange={onFile} aria-label="Choose a BibTeX or RIS file" />
       </label>
+      <div className="paste-list">
+        <label htmlFor="paste-list" className="field-label">Or paste a reference list, one per line</label>
+        <textarea id="paste-list" rows={5} value={pasted} onChange={(e) => setPasted(e.target.value)}
+          placeholder={"Bloom, N., Liang, J., Roberts, J., & Ying, Z. J. (2015). Does working from home work? …\n10.1126/science.adh2586"} />
+        <div className="actions">
+          <button className="btn-secondary btn-sm" onClick={() => loadPasted(pasted)} disabled={!pasted.trim() || running}>Load the list</button>
+        </div>
+      </div>
       {error && <p className="error" role="alert">{error}</p>}
 
       {rows.length > 0 && (
@@ -132,7 +157,7 @@ export function ImportPanel({ projectId, onAdded, collectionId }: Props) {
               <li key={i} className="import-row">
                 <div className="import-main">
                   <span className="import-title">{r.item.title || `DOI ${r.item.doi}`}</span>
-                  <span className="import-meta">{r.item.authors || "No authors"}{r.item.year ? ` · ${r.item.year}` : ""}{r.item.doi ? ` · ${r.item.doi}` : ""}</span>
+                  <span className="import-meta">{r.item.raw ? "Pasted reference, checked as written" : <>{r.item.authors || "No authors"}{r.item.year ? ` · ${r.item.year}` : ""}{r.item.doi ? ` · ${r.item.doi}` : ""}</>}</span>
                   {r.result && <span className="import-reason">{r.result.reason}</span>}
                   {r.error && <span className="error small">{r.error}</span>}
                 </div>

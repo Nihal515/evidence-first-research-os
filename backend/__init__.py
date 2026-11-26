@@ -1,1 +1,1 @@
-"""Evidence-First Research OS backend (FastAPI)."""
+"""Paper Trail backend (FastAPI)."""

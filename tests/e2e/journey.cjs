@@ -50,7 +50,7 @@ async function run(mobile) {
   };
 
   // ------------------------------------------------------------ project
-  await page.goto(BASE);
+  await page.goto(`${BASE}/home`); // "/" is now the Paper Trail landing page
   await page.getByRole('heading', { name: 'Start a research project' }).waitFor();
   await page.getByLabel('Project title').fill('AI tutoring in secondary schools (test)');
   await page.getByLabel(/Research question/).fill('Does AI tutoring improve maths outcomes?');

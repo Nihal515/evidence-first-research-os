@@ -9,5 +9,8 @@
       "excludeFiles": "{node_modules/**,src/**,dist/**,tests/**,.git/**}"
     }
   },
-  "rewrites": [{ "source": "/api/(.*)", "destination": "/api/index" }]
+  "rewrites": [
+    { "source": "/api/(.*)", "destination": "/api/index" },
+    { "source": "/((?!api/|assets/|favicon\\.svg).*)", "destination": "/index.html" }
+  ]
 }

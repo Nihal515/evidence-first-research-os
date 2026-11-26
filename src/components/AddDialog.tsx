@@ -12,6 +12,7 @@ interface Props {
   projectId: string;
   collection: Collection | null;
   initialTab?: Tab;
+  initialText?: string;
   onClose: () => void;
   onAdded: () => void;
 }
@@ -22,7 +23,7 @@ const TABS: { id: Tab; label: string; icon: typeof Search }[] = [
   { id: "import", label: "Import file", icon: FileUp },
 ];
 
-export function AddDialog({ projectId, collection, initialTab = "search", onClose, onAdded }: Props) {
+export function AddDialog({ projectId, collection, initialTab = "search", initialText, onClose, onAdded }: Props) {
   const [tab, setTab] = useState<Tab>(initialTab);
   const ref = useRef<HTMLDivElement>(null);
 
@@ -51,7 +52,7 @@ export function AddDialog({ projectId, collection, initialTab = "search", onClos
         <div className="dialog-body">
           {tab === "search" && <FindPanel projectId={projectId} onAdded={onAdded} collectionId={collection?.id} />}
           {tab === "check" && <CheckPanel projectId={projectId} onAdded={onAdded} collectionId={collection?.id} />}
-          {tab === "import" && <ImportPanel projectId={projectId} onAdded={onAdded} collectionId={collection?.id} />}
+          {tab === "import" && <ImportPanel projectId={projectId} onAdded={onAdded} collectionId={collection?.id} initialText={initialText} />}
           <details className="dialog-key">
             <summary>What the trust labels mean</summary>
             <TrustKey />

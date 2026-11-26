@@ -1,0 +1,17 @@
+/* Self-contained so the tour looks the same over the landing page and the workspace. */
+.scrim { position: fixed; inset: 0; z-index: 1000; background: rgba(12, 14, 34, 0.55); display: grid; place-items: end center; padding: 16px; }
+@media (min-width: 720px) { .scrim { place-items: center; } }
+.card { width: min(520px, 100%); background: #fbfdfc; color: #14213d; border: 1px solid #d9e2de; box-shadow: 0 20px 50px rgba(12, 14, 34, 0.35); padding: 22px 22px 18px; display: grid; gap: 12px; font-family: "Public Sans", Inter, system-ui, sans-serif; font-size: 15px; line-height: 1.55; outline: none; }
+.kicker { margin: 0; font: 600 12px/1.2 "Sometype Mono", ui-monospace, monospace; letter-spacing: 0.04em; text-transform: uppercase; color: #5b6b66; }
+.title { margin: 0; font: 400 1.45rem/1.2 Marcellus, Georgia, serif; color: #14213d; }
+.body { margin: 0; color: #334155; min-height: 4.7em; }
+.bar { display: grid; grid-template-columns: repeat(6, 1fr); gap: 4px; }
+.bar span { height: 3px; background: #e2e8e5; overflow: hidden; }
+.bar i { display: block; height: 100%; background: #0f766e; transition: width 0.25s linear; }
+.actions { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+.actions button { font: 600 14px/1 inherit; font-family: inherit; min-height: 38px; padding: 0 14px; border: 1.5px solid #0f766e; background: none; color: #0f766e; cursor: pointer; }
+.actions button:disabled { opacity: 0.4; cursor: default; }
+.actions .main { background: #0f766e; color: #fff; }
+.actions .close { margin-left: auto; border-color: transparent; color: #5b6b66; }
+.actions button:focus-visible { outline: 3px solid #d97706; outline-offset: 2px; }
+@media (prefers-reduced-motion: reduce) { .bar i { transition: none; } }

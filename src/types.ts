@@ -143,3 +143,36 @@ export type CheckInput =
   | { mode: "fields"; title: string; authors: string; year: number | null; doi: string }
   | { mode: "text"; text: string }
   | { mode: "doi"; doi: string };
+
+// ------------------------------------------------------------------ Integrity Lab
+export type LabOutcome = "correct" | "expected-retraction" | "caught" | "missed" | "false-alarm" | "could-not-check";
+
+export interface LabCase {
+  id: string;
+  family: string;
+  family_label: string;
+  title: string;
+  label: string; // "Real reference" or "Invented for this Lab; do not cite"
+  invented: boolean;
+  reference: { raw: string; title?: string; authors?: string[]; year?: number; doi?: string };
+  expected: "metadata-match" | "retraction-flag" | "reject-invented";
+  expected_text: string;
+  explanation: string;
+  provenance: { registry: string; doi: string; url: string }[];
+  mutation: { method: string; changed: string[] } | null;
+}
+
+export interface LabCorpus {
+  manifest: { version: string; source: string; selection_rule: string; generation_rule: string; limits: string[] };
+  families: { id: string; label: string }[];
+  cases: LabCase[];
+}
+
+export interface LabRun extends Partial<Omit<CheckResult, "label">> {
+  case_id: string;
+  refused: boolean;
+  reason?: string;
+  label: Label | null;
+  retraction?: Retraction | null;
+  evaluation: { outcome: LabOutcome; text: string; limited_coverage: boolean };
+}

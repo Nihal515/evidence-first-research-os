@@ -5,8 +5,11 @@ import type {
   CheckInput,
   Collection,
   CheckResult,
+  LabCorpus,
+  LabRun,
   Project,
   Reference,
+  Retraction,
   SearchResponse,
   Summary,
 } from "./types";
@@ -106,6 +109,10 @@ export const api = {
     request<Project>(`/api/projects/${id}`, { method: "PUT", body: JSON.stringify({ title, question }) }),
   search: (id: string, q: string) => request<SearchResponse>(`/api/projects/${id}/search?q=${encodeURIComponent(q)}`),
   check: (id: string, input: CheckInput) => request<CheckResult>(`/api/projects/${id}/check`, json(input)),
+  /** Check without a project: nothing is saved. */
+  publicCheck: (input: CheckInput) => request<CheckResult & { retraction?: Retraction | null }>("/api/check", json(input)),
+  lab: () => request<LabCorpus>("/api/lab"),
+  labRun: (caseId: string) => request<LabRun>(`/api/lab/run?case_id=${encodeURIComponent(caseId)}`, { method: "POST" }),
   approve: (id: string, input: CheckInput, collectionId?: string | null) =>
     request<Reference>(`/api/projects/${id}/references`, json(collectionId ? { ...input, collection_id: collectionId } : input)),
   references: (id: string, includeTrash = false) =>

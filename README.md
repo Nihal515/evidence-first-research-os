@@ -1,4 +1,4 @@
-# Evidence-First Research OS
+# Paper Trail
 
 AI Club Hackathon 2026 — team: Nihal Pusthe · Yash Petkar · Siddal · Hemanth
 

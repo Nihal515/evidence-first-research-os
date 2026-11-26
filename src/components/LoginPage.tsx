@@ -41,10 +41,10 @@ export function LoginPage({ onDone, onGuest, configured }: Props) {
       <div className="login-card">
         <button className="btn-ghost btn-sm login-back" onClick={onGuest}><ArrowLeft size={14} /> Back</button>
         <div className="welcome-brand">
-          <span className="brand-mark" aria-hidden="true">EF</span>
+          <span className="brand-mark" aria-hidden="true">PT</span>
           <div>
             <h1>{mode === "signin" ? "Sign in" : "Create your account"}</h1>
-            <p className="tagline">Evidence-First Research OS</p>
+            <p className="tagline">Paper Trail</p>
           </div>
         </div>
         <p className="hint">

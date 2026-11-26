@@ -103,10 +103,30 @@ export interface ImportedItem {
   authors: string;   // "Family, G.; Family, G."
   year: number | null;
   doi: string;
+  raw?: string;      // a pasted line: checked as text, exactly as written
 }
 
 export function importInput(item: ImportedItem): CheckInput {
+  if (item.raw) {
+    const bare = item.raw.trim().match(/^(?:https?:\/\/(?:dx\.)?doi\.org\/|doi:\s*)?(10\.\d{4,9}\/\S+)$/i);
+    return bare ? { mode: "doi", doi: bare[1] } : { mode: "text", text: item.raw.slice(0, 2000) };
+  }
   return { mode: "fields", title: item.title, authors: item.authors, year: item.year, doi: item.doi };
+}
+
+/** A pasted reference list: one reference per line. Leading numbers and bullets
+ * ("1.", "[2]", "-", "•") are removed; repeated lines are kept once. */
+export function parsePlainList(text: string): ImportedItem[] {
+  const seen = new Set<string>();
+  const out: ImportedItem[] = [];
+  for (const line of text.split(/\r?\n/)) {
+    const raw = line.replace(/^\s*(?:\[\d+\]|\d+[.)]|[-*•–])\s+/, "").trim();
+    if (raw.length < 12 || seen.has(raw.toLowerCase())) continue;
+    seen.add(raw.toLowerCase());
+    const doi = raw.match(/10\.\d{4,9}\/[^\s"<>]+/)?.[0]?.replace(/[.,;)]+$/, "") ?? "";
+    out.push({ title: raw, authors: "", year: yearOf(raw), doi, raw });
+  }
+  return out;
 }
 
 const cleanDoi = (s: string) => s.trim().replace(/^https?:\/\/(dx\.)?doi\.org\//i, "").replace(/^doi:\s*/i, "");

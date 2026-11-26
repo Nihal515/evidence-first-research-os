@@ -11,11 +11,13 @@
   },
   "dependencies": {
     "@neon/neon-js": "0.10.2",
+    "@types/three": "0.187.0",
     "citeproc": "^2.4.63",
     "docx": "^9.16.0",
     "lucide-react": "^1.80.0",
     "react": "^19.3.1",
-    "react-dom": "^19.3.1"
+    "react-dom": "^19.3.1",
+    "three": "0.187.0"
   },
   "devDependencies": {
     "@types/react": "^19.3.2",

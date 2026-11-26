@@ -19,7 +19,7 @@ async function run(mobile) {
   page.on('pageerror', (e) => errors.push(String(e)));
   const email = mobile ? EMAIL.replace('tester', 'phone') : EMAIL;
 
-  await page.goto(BASE);
+  await page.goto(`${BASE}/home`); // "/" is now the Paper Trail landing page
   await page.getByRole('heading', { name: 'Start a research project' }).waitFor();
   await page.getByLabel('Project title').fill(`Guest library ${tag} (test)`);
   await page.getByRole('button', { name: 'Create project' }).click();

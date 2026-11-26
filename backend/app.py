@@ -23,7 +23,7 @@ from .labels import LABELS, NOT_FOUND, NOT_YET_VERIFIED, VERIFIED
 from .records import normalize_doi, record_from_crossref
 from .verify import now_iso, retraction_status, search, verify_fields, verify_text
 
-app = FastAPI(title="Evidence-First Research OS API", version="1.0.0-stage1")
+app = FastAPI(title="Paper Trail API", version="1.0.0-stage1")
 
 ID = r"^[0-9a-f]{32}$"
 CLIENT_EVENTS = {"EXPORT_APA_COPIED", "EXPORT_APA_DOWNLOADED", "EXPORT_BIBTEX_DOWNLOADED", "EXPORT_RIS_DOWNLOADED",
