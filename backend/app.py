@@ -752,6 +752,15 @@ def ai_status():
             "agents": [{"id": a, "name": ai.AGENT_NAME[a], "min_level": lvl} for a, lvl in ai.AGENT_LEVEL.items()]}
 
 
+@app.get("/api/health/ai")
+def ai_health():
+    """Each AI service tested on its own with a tiny request: ok or not, model, seconds."""
+    if not ai.configured():
+        return {"any_ok": False, "services": {}, "detail": "No AI key is set."}
+    with providers.make_client() as client:
+        return ai.self_test(client)
+
+
 @app.put("/api/projects/{pid}/ai-level")
 def set_ai_level(body: AiLevelIn, pid: str = Path(pattern=ID)):
     """The assessment's AI rule. Agents above this level are refused here, at the server."""

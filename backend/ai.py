@@ -199,6 +199,34 @@ def _openai_once(client, url, key, model, label, system, prompt, schema, timeout
     return _parse(label, _extract_json(text))
 
 
+_groq_list: tuple[float, list[str]] = (0.0, [])
+
+
+def groq_models(client: httpx.Client, key: str) -> list[str]:
+    """Chat models from Groq's own list (cached ten minutes). Speech, guard and
+    tool-only models are left out."""
+    global _groq_list
+    pinned = [_env("GROQ_MODEL")] if _env("GROQ_MODEL") else []
+    if _groq_list[1] and time.monotonic() - _groq_list[0] < 600:
+        return pinned + [m for m in _groq_list[1] if m not in pinned]
+    try:
+        r = client.get("https://api.groq.com/openai/v1/models", headers={"Authorization": f"Bearer {key}"}, timeout=6.0)
+        ids = [m.get("id", "") for m in (r.json().get("data") or []) if m.get("active", True)] if r.status_code == 200 else []
+    except (httpx.HTTPError, ValueError, AttributeError):
+        ids = []
+    skip = ("whisper", "tts", "playai", "guard", "safeguard", "compound", "distil", "embed", "orpheus", "audio")
+    chat = [i for i in ids if not any(x in i.lower() for x in skip)]
+
+    def rank(i: str) -> tuple:
+        low = i.lower()
+        return ("gpt-oss-120b" in low, "70b" in low or "120b" in low, "llama" in low or "gpt-oss" in low, "versatile" in low)
+    chat.sort(key=rank, reverse=True)
+    models = chat[:2] or [GROQ_DEFAULT_MODEL]
+    if ids:
+        _groq_list = (time.monotonic(), models)
+    return pinned + [m for m in models if m not in pinned]
+
+
 _nvidia_list: tuple[float, list[str]] = (0.0, [])
 
 
@@ -219,13 +247,56 @@ def nvidia_models(client: httpx.Client, key: str) -> list[str]:
     chat = [i for i in ids if "nemotron" in i.lower() and not any(x in i.lower() for x in skip)]
 
     def rank(i: str) -> tuple:
+        low = i.lower()
         nums = [float(x) for x in re.findall(r"(\d+(?:\.\d+)?)", i.split("/")[-1])[:1]] or [0.0]
-        return ("nano" in i.lower(), "mini" in i.lower(), nums[0])
+        slow = "reasoning" in low or "omni" in low or "thinking" in low
+        return (not slow, "nano" in low or "mini" in low, nums[0])
     chat.sort(key=rank, reverse=True)
     models = chat[:2] or [NVIDIA_FALLBACK_MODEL]
     if ids:
         _nvidia_list = (time.monotonic(), models)
     return pinned + [m for m in models if m not in pinned]
+
+
+_selftest: dict = {"at": 0.0, "result": None}
+
+
+def self_test(client: httpx.Client) -> dict:
+    """Ask each configured service, separately, for a tiny JSON answer (cached two minutes).
+    Reports only ok / failed, the model and the time taken; never a key."""
+    if _selftest["result"] and time.monotonic() - _selftest["at"] < 120:
+        return _selftest["result"]
+    k = keys()
+    system, prompt = "You answer with JSON.", 'Return {"ok": true}.'
+    schema = {"type": "OBJECT", "properties": {"ok": {"type": "BOOLEAN"}}, "required": ["ok"]}
+    jobs: list[tuple[str, str, object]] = []
+    if "gemini" in k:
+        for m in _gemini_models(client, k["gemini"])[:4]:
+            jobs.append(("gemini", m, lambda m=m: _gemini_once(client, k["gemini"], m, system, prompt, schema, 15.0)))
+    if "groq" in k:
+        for m in groq_models(client, k["groq"])[:1]:
+            jobs.append(("groq", m, lambda m=m: _openai_once(client, GROQ_URL, k["groq"], m, f"Groq ({m})",
+                                                             system, prompt, schema, 15.0, True)))
+    if "nvidia" in k:
+        for m in nvidia_models(client, k["nvidia"])[:2]:
+            jobs.append(("nvidia", m, lambda m=m: _openai_once(client, f"{NVIDIA_BASE}/chat/completions", k["nvidia"], m,
+                                                               f"NVIDIA ({m})", system + " /no_think", prompt, schema, 15.0, False)))
+    out: dict = {"checked_at": None, "services": {}}
+
+    def run(job):
+        prov, model, fn = job
+        t0 = time.monotonic()
+        status, value = fn()  # type: ignore[operator]
+        return prov, model, status, value, round(time.monotonic() - t0, 1)
+    with ThreadPoolExecutor(max_workers=max(1, len(jobs))) as pool:
+        for prov, model, status, value, secs in pool.map(run, jobs):
+            out["services"].setdefault(prov, []).append(
+                {"model": model, "ok": status == "ok", "seconds": secs, "detail": "answered" if status == "ok" else str(value)})
+    from .verify import now_iso
+    out["checked_at"] = now_iso()
+    out["any_ok"] = any(m["ok"] for v in out["services"].values() for m in v)
+    _selftest.update(at=time.monotonic(), result=out)
+    return out
 
 
 def generate_json(client: httpx.Client, system: str, prompt: str, schema: dict) -> dict:
@@ -242,9 +313,9 @@ def generate_json(client: httpx.Client, system: str, prompt: str, schema: dict) 
             attempts.append((f"Google Gemini ({m})",
                              lambda t, m=m: _gemini_once(client, k["gemini"], m, system, prompt, schema, t)))
     if "groq" in k:
-        gm = _env("GROQ_MODEL") or GROQ_DEFAULT_MODEL
-        attempts.append((f"Groq ({gm})", lambda t, gm=gm: _openai_once(
-            client, GROQ_URL, k["groq"], gm, f"Groq ({gm})", system, prompt, schema, t, True)))
+        for gm in groq_models(client, k["groq"])[:1]:
+            attempts.append((f"Groq ({gm})", lambda t, gm=gm: _openai_once(
+                client, GROQ_URL, k["groq"], gm, f"Groq ({gm})", system, prompt, schema, t, True)))
     if "nvidia" in k:
         for nm in nvidia_models(client, k["nvidia"])[:2]:
             attempts.append((f"NVIDIA ({nm})", lambda t, nm=nm: _openai_once(
