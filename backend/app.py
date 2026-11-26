@@ -28,7 +28,7 @@ app = FastAPI(title="Paper Trail API", version="1.0.0-stage1")
 
 ID = r"^[0-9a-f]{32}$"
 CLIENT_EVENTS = {"EXPORT_APA_COPIED", "EXPORT_APA_DOWNLOADED", "EXPORT_BIBTEX_DOWNLOADED", "EXPORT_RIS_DOWNLOADED",
-                 "STATEMENT_COPIED", "STATEMENT_DOWNLOADED"}
+                 "STATEMENT_COPIED", "STATEMENT_DOWNLOADED", "MANUSCRIPT_SCANNED"}
 
 
 app.middleware("http")(auth.identity_middleware)
@@ -719,6 +719,7 @@ def summary(pid: str = Path(pattern=ID)):
                        NOT_FOUND: sum(1 for r in refs if r["label"] == NOT_FOUND)},
         "approvals": sum(1 for e in events if e["event"] == "REFERENCE_APPROVED"),
         "exports": sum(1 for e in events if e["event"].startswith("EXPORT_")),
+        "manuscripts": sum(1 for e in events if e["event"] == "MANUSCRIPT_SCANNED"),
         "ai_runs": sum(1 for e in events if e["actor"] == "ai"),
         "ai_features": {"search_terms": sum(1 for e in events if e["event"] == "AI_SEARCH_TERMS_SUGGESTED"),
                         "readings": sum(1 for e in events if e["event"] == "AI_ABSTRACT_READ"),

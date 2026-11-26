@@ -363,8 +363,19 @@ def _norm(s: str) -> str:
 def quote_in_source(quote: str, source: str) -> bool:
     """The quote guard: a quote counts only if it appears word for word in the source
     (ignoring case, spacing, curly quotes and dashes) and is long enough to mean something."""
-    q = _norm(quote).strip(" .,;:\"'")
-    return len(q) >= 12 and q in _norm(source)
+    src = _norm(source)
+    parts = [x.strip(" .,;:\"'") for x in re.split(r"\.\.\.|\u2026|\[\.\.\.\]", _norm(quote))]
+    parts = [x for x in parts if x]
+    # a quote shortened with an ellipsis counts only if every piece is in the source, in order
+    if not parts or len(" ".join(parts)) < 12 or any(len(x) < 6 for x in parts):
+        return False
+    at = 0
+    for x in parts:
+        at = src.find(x, at)
+        if at < 0:
+            return False
+        at += len(x)
+    return True
 
 
 _NUM = re.compile(r"(?<![\w.])(\d+(?:[.,]\d+)?)\s*(%|percent|per cent)?", re.I)
@@ -476,7 +487,9 @@ def check_claim(client: httpx.Client, claim: str, title: str, abstract: str) -> 
         return {"verdict": "discarded", "quote": quote, "quote_ok": False, "numbers": None, "explanation": explanation,
                 "guard": "The AI's quote is not in the abstract word for word, so its answer was discarded."}
     nums = number_check(claim, quote) if quote_ok else None
-    if verdict == "supported" and nums and not nums["ok"]:
-        verdict, guard = "contradicted", "Code overruled the AI: the numbers in your sentence are not the source's numbers."
+    if verdict in ("supported", "not_addressed") and nums and not nums["ok"]:
+        guard = ("Code overruled the AI: the numbers in your sentence are not the source's numbers."
+                 if verdict == "supported" else "Code: the source gives a different number for this.")
+        verdict = "contradicted"
     return {"verdict": verdict, "quote": quote if quote_ok else "", "quote_ok": quote_ok, "numbers": nums,
             "explanation": explanation, "guard": guard}

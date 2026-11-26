@@ -136,6 +136,7 @@ export interface Summary {
   approvals: number;
   exports: number;
   ai_runs: number;
+  manuscripts?: number;
   ai_features?: { search_terms: number; readings: number; claim_checks: number };
   ai_models?: string[];
   ai_level?: number;

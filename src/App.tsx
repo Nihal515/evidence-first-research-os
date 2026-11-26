@@ -1,4 +1,4 @@
-import { BookOpenCheck, CircleUser, FlaskConical, FolderCog, Library, LogIn, LogOut, Moon, MoreHorizontal, PlayCircle, Quote, ScrollText, ShieldCheck, Sun, X } from "lucide-react";
+import { BookOpenCheck, CircleUser, FileUp, FlaskConical, FolderCog, Library, LogIn, LogOut, Moon, MoreHorizontal, PlayCircle, Quote, ScrollText, ShieldCheck, Sun, X } from "lucide-react";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { api, ApiError, type Me } from "./api";
 import { onAuthChange, restoreSession, signOut } from "./auth";
@@ -10,6 +10,7 @@ import { GuidePage, RulesPage } from "./components/InfoPages";
 import { LabPage } from "./components/LabPage";
 import { LibraryView } from "./components/LibraryView";
 import { LoginPage } from "./components/LoginPage";
+import { PaperPanel, type PaperState } from "./components/PaperPanel";
 import { ProjectPanel } from "./components/ProjectPanel";
 import { ReferenceListView } from "./components/ReferenceListView";
 import { Sidebar } from "./components/Sidebar";
@@ -22,7 +23,7 @@ import { runExport, type ExportFormat } from "./lib/exportActions";
 import { refsForView, viewCounts, viewTitle, type View } from "./lib/library";
 import type { BulkAction, Collection, Project, Reference } from "./types";
 
-type Page = "library" | "list" | "statement" | "project" | InfoPage;
+type Page = "library" | "paper" | "list" | "statement" | "project" | InfoPage;
 type InfoPage = "guide" | "lab" | "rules";
 const INFO: { id: InfoPage; label: string; path: string; icon: typeof Library }[] = [
   { id: "guide", label: "How it works", path: "/guide", icon: BookOpenCheck },
@@ -30,10 +31,11 @@ const INFO: { id: InfoPage; label: string; path: string; icon: typeof Library }[
   { id: "rules", label: "House rules", path: "/rules", icon: ScrollText },
 ];
 const isInfo = (p: Page): p is InfoPage => p === "guide" || p === "lab" || p === "rules";
-const ROUTE_PAGE: Record<string, Page> = { "/projects": "project", "/guide": "guide", "/lab": "lab", "/rules": "rules" };
+const ROUTE_PAGE: Record<string, Page> = { "/paper": "paper", "/projects": "project", "/guide": "guide", "/lab": "lab", "/rules": "rules" };
 const THEME_KEY = "pt.theme";
 const PAGES: { id: Page; label: string; short: string; icon: typeof Library }[] = [
   { id: "library", label: "Library", short: "Library", icon: Library },
+  { id: "paper", label: "Your paper: upload and check", short: "Paper", icon: FileUp },
   { id: "list", label: "Reference list (APA 7)", short: "APA list", icon: Quote },
   { id: "statement", label: "AI-use statement", short: "AI use", icon: ShieldCheck },
   { id: "project", label: "Project", short: "Project", icon: FolderCog },
@@ -70,6 +72,7 @@ export default function App({ route = "/home" }: { route?: string }) {
   const [dups, setDups] = useState<{ groups: string[][]; rule: string }>({ groups: [], rule: "" });
   const [page, setPageState] = useState<Page>(() => ROUTE_PAGE[route] ?? "library");
   const [moreOpen, setMoreOpen] = useState(false);
+  const [paper, setPaper] = useState<PaperState | null>(null); // kept while moving between pages
   const [dark, setDark] = useState(() => storage(() => localStorage.getItem(THEME_KEY) === "dark", false));
   // /check opens the Add dialog: on Import with a handed-over list, otherwise on Check
   const [checkOpen, setCheckOpen] = useState<{ tab: "check" | "import"; text: string } | null>(null);
@@ -94,14 +97,14 @@ export default function App({ route = "/home" }: { route?: string }) {
   const setPage = useCallback((p: Page) => {
     setPageState(p);
     setMoreOpen(false);
-    const path = isInfo(p) ? INFO.find((x) => x.id === p)!.path : p === "project" ? "/projects" : "/home";
+    const path = isInfo(p) ? INFO.find((x) => x.id === p)!.path : p === "project" ? "/projects" : p === "paper" ? "/paper" : "/home";
     if (window.location.pathname !== path) go(path);
   }, []);
 
   // follow the address bar (links, Back and Forward)
   useEffect(() => {
     if (ROUTE_PAGE[route]) setPageState(ROUTE_PAGE[route]);
-    else setPageState((cur) => (isInfo(cur) || cur === "project" ? "library" : cur));
+    else setPageState((cur) => (isInfo(cur) || cur === "project" || cur === "paper" ? "library" : cur));
     if (route === "/check") {
       const text = storage(() => sessionStorage.getItem(HANDOFF) || "", "");
       storage(() => sessionStorage.removeItem(HANDOFF), undefined);
@@ -249,6 +252,7 @@ export default function App({ route = "/home" }: { route?: string }) {
     if (!p.owned) rememberProject(p);
     if (account) api.myProjects().then(setAccountProjects).catch(() => undefined);
     if (isNew) {
+      setPaper(null);
       setRefs([]);
       setCollections([]);
       setDups({ groups: [], rule: "" });
@@ -554,6 +558,10 @@ export default function App({ route = "/home" }: { route?: string }) {
 
         {infoContent}
         {page === "library" && libraryContent}
+        {page === "paper" && (
+          <PaperPanel projectId={project.id} aiLevel={project.ai_level} library={refs} value={paper} onChange={setPaper}
+            onAdded={() => reload(project.id)} />
+        )}
         {page === "list" && <ReferenceListView projectId={project.id} references={activeRefs} />}
         {page === "statement" && <div className="page"><StatementPanel projectId={project.id} refreshKey={refreshKey} /></div>}
         {page === "project" && (

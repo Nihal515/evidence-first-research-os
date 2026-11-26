@@ -41,6 +41,8 @@ export function GuidePage() {
           <dd>Add → Search sends your words to Crossref (and OpenAlex as a backup). Each result is labelled before you see it. Nothing is added by searching.</dd>
           <dt>Check</dt>
           <dd>Add → Check takes one reference, typed in fields or pasted as text. Add → Import takes a whole list, a BibTeX file or a RIS file, and checks each line.</dd>
+          <dt>Your paper</dt>
+          <dd>Upload your draft (Word .docx, PDF, .odt, .txt or .md). It is read in your browser and never uploaded. Code finds the reference list and every in-text citation, shows citations missing from the list and references never cited, checks each reference live, and lets you add the real ones to your library. The Challenger can then test each citing sentence.</dd>
           <dt>Approve</dt>
           <dd>The Add button on a result is the only way a source enters your library. The server runs the check again before it saves, and refuses anything Not found.</dd>
           <dt>Cite</dt>

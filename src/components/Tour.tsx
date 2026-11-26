@@ -21,7 +21,7 @@ const STEPS = [
   },
   {
     title: "2. Check what you already have",
-    body: "Paste a reference, a DOI or a whole list. Plain code compares title, authors, year and DOI against the record. A fake reference is never Verified.",
+    body: "Paste a reference or a list, or upload your paper (Word, PDF): every reference is checked and every in-text citation is matched to the list. A fake reference is never Verified.",
   },
   {
     title: "3. Approve with one click",

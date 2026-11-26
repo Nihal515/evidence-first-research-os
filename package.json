@@ -14,7 +14,9 @@
     "@types/three": "0.187.0",
     "citeproc": "^2.4.63",
     "docx": "^9.16.0",
+    "jszip": "^3.10.2",
     "lucide-react": "^1.80.0",
+    "pdfjs-dist": "^6.5.438",
     "react": "^19.3.1",
     "react-dom": "^19.3.1",
     "three": "0.187.0"

@@ -16,6 +16,12 @@ export function buildStatement(s: Summary, when: Date = new Date()): string {
 
   sentences.push(`I used Paper Trail, a research-assistant website, while preparing this work${project}.`);
 
+  if (s.manuscripts) {
+    sentences.push(
+      "It read my draft in the browser (the file was not uploaded) to list its reference list and in-text citations, and cross-checked one against the other with plain code.",
+    );
+  }
+
   if (s.searches > 0) {
     const where = s.search_providers.length ? list(s.search_providers) : "scholarly databases";
     sentences.push(`It searched ${where} ${times(s.searches)} to help me find sources.`);

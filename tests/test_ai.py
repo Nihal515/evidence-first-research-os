@@ -61,6 +61,8 @@ def test_quote_guard():
     assert ai.quote_in_source("Home  working   led to a 13% Performance increase", ABSTRACT)  # spacing and case
     assert not ai.quote_in_source("led to a 31% performance increase", ABSTRACT)  # altered
     assert not ai.quote_in_source("Deep", ABSTRACT)  # too short to mean anything
+    assert ai.quote_in_source("Deep learning allows computational models ... to learn representations of data", ABSTRACT)
+    assert not ai.quote_in_source("to learn representations of data ... Deep learning allows computational models", ABSTRACT)
 
 
 def test_number_check():

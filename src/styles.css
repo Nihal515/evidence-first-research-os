@@ -683,3 +683,22 @@ html[data-theme="dark"] .avatar { color: #0d1322; }
   .ai-row input { font-size: 16px; }
   .ai-claim textarea { font-size: 16px; }
 }
+
+/* ---------------------------------------------------------------- Your paper */
+.page.paper { max-width: 1060px; }
+.paper-drop { min-height: 110px; }
+.paper-tiles { grid-template-columns: repeat(6, minmax(0, 1fr)); }
+.paper-tiles li[data-tone="warn"] b { color: var(--amber); }
+.paper-tiles li[data-tone="bad"] b { color: var(--red); }
+.paper-refs { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 6px; }
+.paper-ref-text { font-size: 13.5px; color: var(--ink); line-height: 1.5; overflow-wrap: anywhere; }
+.paper-cites { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 8px; }
+.paper-cite { border: 1px solid var(--line); border-left: 3px solid var(--teal); border-radius: 8px; padding: 10px 12px; display: flex; flex-direction: column; gap: 6px; }
+.paper-cite[data-ok="false"] { border-left-color: var(--red); }
+.paper-cite-head { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.paper-cite-head code { font-family: "Sometype Mono", ui-monospace, monospace; font-size: 12.5px; background: var(--raise); padding: 2px 6px; border-radius: 5px; color: var(--ink); }
+.paper-miss { color: var(--red); font-weight: 700; font-size: 13px; }
+.paper-sentence { margin: 0; font-size: 13.5px; line-height: 1.55; color: var(--body); }
+@media (max-width: 960px) {
+  .paper-tiles { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}

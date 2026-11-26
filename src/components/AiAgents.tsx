@@ -203,7 +203,7 @@ export function AiSourceTools({ projectId, reference: r, aiLevel, onChanged }:
   );
 }
 
-function ClaimResult({ res }: { res: AiClaimCheck }) {
+export function ClaimResult({ res }: { res: AiClaimCheck }) {
   const v = VERDICT[res.verdict];
   const Icon = v.icon;
   return (
