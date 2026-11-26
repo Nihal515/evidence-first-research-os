@@ -18,8 +18,10 @@ adds anything to a library. Everything it returns is labelled "AI suggestion".
 from __future__ import annotations
 
 import json
+import logging
 import os
 import re
+import time
 import unicodedata
 from typing import Optional
 
@@ -37,6 +39,8 @@ GROQ_DEFAULT_MODEL = "llama-3.3-70b-versatile"
 TIMEOUT = httpx.Timeout(22.0, connect=6.0)  # the whole function has 30 s
 
 _working_model: Optional[str] = None  # remembered per server instance
+log = logging.getLogger("paper_trail.ai")
+DEADLINE = 25.0  # seconds for all model attempts together (the function has 30 s)
 
 
 class AIUnavailable(Exception):
@@ -80,18 +84,18 @@ def _gemini_candidates(client: httpx.Client, key: str) -> list[str]:
                  if "generateContent" in (m.get("supportedGenerationMethods") or [])] if r.status_code == 200 else []
     except (httpx.HTTPError, ValueError):
         names = []
-    skip = ("lite", "image", "tts", "audio", "live", "embedding", "8b", "exp", "thinking", "native", "robotics", "computer")
+    skip = ("image", "tts", "audio", "live", "embedding", "8b", "exp", "thinking", "native", "robotics", "computer")
     flash = [n for n in names if "flash" in n and not any(s in n for s in skip)]
 
     def version(n: str) -> tuple:
         nums = [float(x) for x in re.findall(r"\d+(?:\.\d+)?", n)[:1]] or [0.0]
-        return (nums[0], "preview" not in n, "latest" in n)
+        return ("lite" not in n, nums[0], "preview" not in n, "latest" in n)  # full Flash first, Lite last
     flash.sort(key=version, reverse=True)
     out: list[str] = []
     for n in first + flash:
         if n not in out:
             out.append(n)
-    return out[:5]
+    return out[:6]
 
 
 def _gemini(client: httpx.Client, key: str, system: str, prompt: str, schema: dict) -> dict:
@@ -103,26 +107,42 @@ def _gemini(client: httpx.Client, key: str, system: str, prompt: str, schema: di
                              "responseMimeType": "application/json", "responseSchema": schema},
     }
     last = "the AI service did not answer"
+    started = time.monotonic()
     for model in _gemini_candidates(client, key):
+        left = DEADLINE - (time.monotonic() - started)
+        if left < 4:
+            break
         payload = json.loads(json.dumps(body))
         if "2.5-flash" in model:  # answer straight away: these tasks need no long thinking
             payload["generationConfig"]["thinkingConfig"] = {"thinkingBudget": 0}
         try:
             r = client.post(f"{GEMINI_BASE}/models/{model}:generateContent", json=payload,
-                            headers={"x-goog-api-key": key}, timeout=TIMEOUT)
+                            headers={"x-goog-api-key": key}, timeout=httpx.Timeout(min(15.0, left), connect=5.0))
         except httpx.TimeoutException:
-            raise AIUnavailable("The AI took too long to answer. Try again.")
-        except httpx.HTTPError:
-            raise AIUnavailable("The AI service could not be reached. Try again.")
+            log.warning("gemini %s timed out", model)
+            last = "it took too long to answer"
+            continue
+        except httpx.HTTPError as exc:
+            log.warning("gemini %s network error: %s", model, type(exc).__name__)
+            last = "the AI service could not be reached"
+            continue
+        if r.status_code != 200:
+            # Gemini's error bodies never contain the key; log the start for diagnosis
+            log.warning("gemini %s HTTP %s: %s", model, r.status_code, r.text[:300].replace("\n", " "))
         if r.status_code == 404 or (r.status_code == 400 and "model" in r.text.lower() and "not" in r.text.lower()):
             last = f"model {model} is not available"
             continue
-        if r.status_code == 429:
-            raise AIUnavailable("The free AI quota is busy right now. Wait a minute and try again.")
+        if r.status_code == 400 and "thinking" in r.text.lower():
+            last = f"model {model} refused the request settings"
+            continue
         if r.status_code in (401, 403) or "API_KEY_INVALID" in r.text:
             raise AIUnavailable("The AI key was refused. Check LLM_API_KEY in the project settings.")
+        if r.status_code == 429:
+            last = "the free AI quota is busy right now; wait a minute and try again"
+            continue  # another model has its own quota
         if r.status_code >= 500:
-            raise AIUnavailable("The AI service had a problem. Try again in a moment.")
+            last = "the AI service is overloaded right now; try again in a moment"
+            continue
         if r.status_code != 200:
             raise AIUnavailable("The AI could not answer that request.")
         data = r.json()
@@ -134,10 +154,12 @@ def _gemini(client: httpx.Client, key: str, system: str, prompt: str, schema: di
         try:
             out = json.loads(text)
         except ValueError:
-            raise AIUnavailable("The AI's answer was not in the expected form, so it was discarded.")
+            log.warning("gemini %s returned non-JSON (%s chars)", model, len(text))
+            last = "the AI's answer was not in the expected form"
+            continue
         _working_model = model
         return out if isinstance(out, dict) else {}
-    raise AIUnavailable(f"No AI model could answer ({last}).")
+    raise AIUnavailable(f"The AI could not answer: {last}. Nothing was changed.")
 
 
 def _groq(client: httpx.Client, key: str, system: str, prompt: str, schema: dict) -> dict:
