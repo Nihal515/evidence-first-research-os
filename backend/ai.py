@@ -23,6 +23,8 @@ import os
 import re
 import time
 import unicodedata
+from concurrent.futures import ThreadPoolExecutor, as_completed
+from concurrent.futures import TimeoutError as FuturesTimeout
 from typing import Optional
 
 import httpx
@@ -98,7 +100,43 @@ def _gemini_candidates(client: httpx.Client, key: str) -> list[str]:
     return out[:6]
 
 
+def _gemini_once(client: httpx.Client, key: str, model: str, body: dict, timeout: float) -> tuple[str, object]:
+    """One attempt: ("ok", answer) · ("skip", reason: try another model) · ("fatal", message)."""
+    try:
+        r = client.post(f"{GEMINI_BASE}/models/{model}:generateContent", json=body,
+                        headers={"x-goog-api-key": key}, timeout=httpx.Timeout(timeout, connect=5.0))
+    except httpx.TimeoutException:
+        log.warning("gemini %s timed out", model)
+        return "skip", "it took too long to answer"
+    except httpx.HTTPError as exc:
+        log.warning("gemini %s network error: %s", model, type(exc).__name__)
+        return "skip", "the AI service could not be reached"
+    if r.status_code != 200:  # Gemini's error bodies never contain the key
+        log.warning("gemini %s HTTP %s: %s", model, r.status_code, r.text[:300].replace("\n", " "))
+    if r.status_code in (401, 403) or "API_KEY_INVALID" in r.text:
+        return "fatal", "The AI key was refused. Check LLM_API_KEY in the project settings."
+    if r.status_code == 404 or r.status_code == 400 and "model" in r.text.lower():
+        return "skip", f"model {model} is not available"
+    if r.status_code == 429:
+        return "skip", "the free AI quota is busy right now; wait a minute and try again"
+    if r.status_code >= 500:
+        return "skip", "the AI models are overloaded right now; try again in a moment"
+    if r.status_code != 200:
+        return "skip", "the AI could not answer that request"
+    try:
+        cands = r.json().get("candidates") or []
+        parts = (cands[0].get("content") or {}).get("parts") or [] if cands else []
+        text = "".join(p.get("text", "") for p in parts if not p.get("thought"))
+        out = json.loads(text)
+    except (ValueError, AttributeError, IndexError):
+        log.warning("gemini %s returned no usable JSON", model)
+        return "skip", "the AI's answer was not in the expected form"
+    return ("ok", out) if isinstance(out, dict) else ("skip", "the AI's answer was not in the expected form")
+
+
 def _gemini(client: httpx.Client, key: str, system: str, prompt: str, schema: dict) -> dict:
+    """Ask up to three Flash models at once and take the first good answer: on the free
+    tier one model is often overloaded while another answers in a few seconds."""
     global _working_model
     body = {
         "systemInstruction": {"parts": [{"text": system}]},
@@ -106,60 +144,27 @@ def _gemini(client: httpx.Client, key: str, system: str, prompt: str, schema: di
         "generationConfig": {"temperature": 0.2, "maxOutputTokens": 2048,
                              "responseMimeType": "application/json", "responseSchema": schema},
     }
-    last = "the AI service did not answer"
-    started = time.monotonic()
+    started, last = time.monotonic(), "the AI service did not answer"
     models = _gemini_candidates(client, key)
-    for i, model in enumerate(models):
+    for batch in (models[:3], models[3:6]):
         left = DEADLINE - (time.monotonic() - started)
-        if left < 4:
+        if not batch or left < 5:
             break
-        payload = json.loads(json.dumps(body))
+        pool = ThreadPoolExecutor(max_workers=len(batch))
+        futures = {pool.submit(_gemini_once, client, key, m, body, min(14.0, left)): m for m in batch}
         try:
-            r = client.post(f"{GEMINI_BASE}/models/{model}:generateContent", json=payload,
-                            headers={"x-goog-api-key": key},
-                            # a busy model gets 9 s, so the next one still has time; the last gets the rest
-                            timeout=httpx.Timeout(min(9.0 if i < len(models) - 1 else 20.0, left), connect=5.0))
-        except httpx.TimeoutException:
-            log.warning("gemini %s timed out", model)
+            for fut in as_completed(futures, timeout=left):
+                status, value = fut.result()
+                if status == "ok":
+                    _working_model = futures[fut]
+                    return value  # type: ignore[return-value]
+                if status == "fatal":
+                    raise AIUnavailable(str(value))
+                last = str(value)
+        except FuturesTimeout:
             last = "it took too long to answer"
-            continue
-        except httpx.HTTPError as exc:
-            log.warning("gemini %s network error: %s", model, type(exc).__name__)
-            last = "the AI service could not be reached"
-            continue
-        if r.status_code != 200:
-            # Gemini's error bodies never contain the key; log the start for diagnosis
-            log.warning("gemini %s HTTP %s: %s", model, r.status_code, r.text[:300].replace("\n", " "))
-        if r.status_code == 404 or (r.status_code == 400 and "model" in r.text.lower() and "not" in r.text.lower()):
-            last = f"model {model} is not available"
-            continue
-        if r.status_code == 400 and "thinking" in r.text.lower():
-            last = f"model {model} refused the request settings"
-            continue
-        if r.status_code in (401, 403) or "API_KEY_INVALID" in r.text:
-            raise AIUnavailable("The AI key was refused. Check LLM_API_KEY in the project settings.")
-        if r.status_code == 429:
-            last = "the free AI quota is busy right now; wait a minute and try again"
-            continue  # another model has its own quota
-        if r.status_code >= 500:
-            last = "the AI service is overloaded right now; try again in a moment"
-            continue
-        if r.status_code != 200:
-            raise AIUnavailable("The AI could not answer that request.")
-        data = r.json()
-        cands = data.get("candidates") or []
-        if not cands:
-            raise AIUnavailable("The AI declined to answer.")
-        parts = (cands[0].get("content") or {}).get("parts") or []
-        text = "".join(p.get("text", "") for p in parts if not p.get("thought"))
-        try:
-            out = json.loads(text)
-        except ValueError:
-            log.warning("gemini %s returned non-JSON (%s chars)", model, len(text))
-            last = "the AI's answer was not in the expected form"
-            continue
-        _working_model = model
-        return out if isinstance(out, dict) else {}
+        finally:
+            pool.shutdown(wait=False, cancel_futures=True)
     raise AIUnavailable(f"The AI could not answer: {last}. Nothing was changed.")
 
 
