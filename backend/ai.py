@@ -53,150 +53,177 @@ def _env(name: str) -> str:
     return (os.getenv(name) or "").strip()
 
 
-def provider() -> tuple[Optional[str], str]:
-    """(provider, key). LLM_PROVIDER + LLM_API_KEY, or a backup GEMINI_API_KEY."""
+def keys() -> dict:
+    """Which AI services have a key: the main LLM_PROVIDER + LLM_API_KEY, plus optional
+    backups GEMINI_API_KEY and GROQ_API_KEY (both free). Keys never leave the server."""
+    out = {}
     prov, key = _env("LLM_PROVIDER").lower(), _env("LLM_API_KEY")
     if prov in ("gemini", "groq") and key:
-        return prov, key
+        out[prov] = key
     if _env("GEMINI_API_KEY"):
-        return "gemini", _env("GEMINI_API_KEY")
-    return None, ""
+        out.setdefault("gemini", _env("GEMINI_API_KEY"))
+    if _env("GROQ_API_KEY"):
+        out.setdefault("groq", _env("GROQ_API_KEY"))
+    return out
+
+
+def provider() -> tuple[Optional[str], str]:
+    k = keys()
+    first = next(iter(k), None)
+    return first, k.get(first, "") if first else ""
 
 
 def configured() -> bool:
-    return provider()[0] is not None
+    return bool(keys())
 
 
 def model_label() -> str:
-    prov, _ = provider()
-    if prov == "groq":
-        return f"Groq {_env('LLM_MODEL') or GROQ_DEFAULT_MODEL}"
-    if prov == "gemini":
-        return f"Google Gemini ({_working_model or _env('LLM_MODEL') or 'Flash'})"
-    return "none"
+    if _working_model:
+        return _working_model
+    k = keys()
+    return " + ".join({"gemini": "Google Gemini", "groq": "Groq"}[x] for x in k) or "none"
 
 
-# ------------------------------------------------------------------ calling the model
-def _gemini_candidates(client: httpx.Client, key: str) -> list[str]:
-    """The configured model first, then the newest available Flash models."""
-    first = [m for m in (_working_model, _env("LLM_MODEL")) if m]
+# ------------------------------------------------------------------ calling the models
+_model_list: tuple[float, list[str]] = (0.0, [])
+
+
+def _gemini_models(client: httpx.Client, key: str) -> list[str]:
+    """Current Flash models from Google's own list (cached ten minutes), newest first, Lite last."""
+    global _model_list
+    if _model_list[1] and time.monotonic() - _model_list[0] < 600:
+        return _model_list[1]
     try:
-        r = client.get(f"{GEMINI_BASE}/models", params={"pageSize": 200}, headers={"x-goog-api-key": key}, timeout=8.0)
+        r = client.get(f"{GEMINI_BASE}/models", params={"pageSize": 200}, headers={"x-goog-api-key": key}, timeout=6.0)
         names = [m.get("name", "").removeprefix("models/") for m in (r.json().get("models") or [])
                  if "generateContent" in (m.get("supportedGenerationMethods") or [])] if r.status_code == 200 else []
     except (httpx.HTTPError, ValueError):
         names = []
     skip = ("image", "tts", "audio", "live", "embedding", "8b", "exp", "thinking", "native", "robotics", "computer",
-            "gemini-2.5-flash", "gemini-2.0", "gemini-1.")  # 2.5 Flash and older are retired for new keys
-    flash = [n for n in names if "flash" in n and not any(s in n for s in skip)]
+            "omni", "gemini-2.5-flash", "gemini-2.0", "gemini-1.")  # retired for new keys, or no free quota
+    flash = [n for n in names if "flash" in n and not any(x in n for x in skip)]
 
-    def version(n: str) -> tuple:
+    def rank(n: str) -> tuple:
         nums = [float(x) for x in re.findall(r"\d+(?:\.\d+)?", n)[:1]] or [0.0]
-        return ("lite" not in n, nums[0], "preview" not in n, "latest" in n)  # full Flash first, Lite last
-    flash.sort(key=version, reverse=True)
-    out: list[str] = []
-    for n in first + (flash or [GEMINI_DEFAULT_MODEL]):
-        if n not in out:
-            out.append(n)
-    return out[:8]
+        return ("lite" not in n, nums[0], "preview" not in n)
+    flash.sort(key=rank, reverse=True)
+    flash = flash[:7] or [GEMINI_DEFAULT_MODEL]
+    if names:
+        _model_list = (time.monotonic(), flash)
+    return flash
 
 
-def _gemini_once(client: httpx.Client, key: str, model: str, body: dict, timeout: float) -> tuple[str, object]:
-    """One attempt: ("ok", answer) · ("skip", reason: try another model) · ("fatal", message)."""
+def _parse(model: str, text: str) -> tuple[str, object]:
     try:
-        r = client.post(f"{GEMINI_BASE}/models/{model}:generateContent", json=body,
-                        headers={"x-goog-api-key": key}, timeout=httpx.Timeout(timeout, connect=5.0))
-    except httpx.TimeoutException:
-        log.warning("gemini %s timed out", model)
-        return "skip", "it took too long to answer"
-    except httpx.HTTPError as exc:
-        log.warning("gemini %s network error: %s", model, type(exc).__name__)
-        return "skip", "the AI service could not be reached"
-    if r.status_code != 200:  # Gemini's error bodies never contain the key
-        log.warning("gemini %s HTTP %s: %s", model, r.status_code, r.text[:300].replace("\n", " "))
-    if r.status_code in (401, 403) or "API_KEY_INVALID" in r.text:
-        return "fatal", "The AI key was refused. Check LLM_API_KEY in the project settings."
-    if r.status_code == 404 or r.status_code == 400 and "model" in r.text.lower():
-        return "skip", f"model {model} is not available"
-    if r.status_code == 429:
-        return "skip", "the free AI quota is busy right now; wait a minute and try again"
-    if r.status_code >= 500:
-        return "skip", "the AI models are overloaded right now; try again in a moment"
-    if r.status_code != 200:
-        return "skip", "the AI could not answer that request"
-    try:
-        cands = r.json().get("candidates") or []
-        parts = (cands[0].get("content") or {}).get("parts") or [] if cands else []
-        text = "".join(p.get("text", "") for p in parts if not p.get("thought"))
         out = json.loads(text)
-    except (ValueError, AttributeError, IndexError):
-        log.warning("gemini %s returned no usable JSON", model)
+    except ValueError:
+        log.warning("%s returned no usable JSON", model)
         return "skip", "the AI's answer was not in the expected form"
     return ("ok", out) if isinstance(out, dict) else ("skip", "the AI's answer was not in the expected form")
 
 
-def _gemini(client: httpx.Client, key: str, system: str, prompt: str, schema: dict) -> dict:
-    """Ask the Flash models at once and take the first good answer: on the free tier
-    several models are often overloaded while another answers in a few seconds. A warm
-    server first asks the model that answered last time, on its own."""
+def _status(model: str, r: httpx.Response) -> Optional[tuple[str, object]]:
+    """Map an HTTP error to skip (try another model) or fatal. None for 200."""
+    if r.status_code == 200:
+        return None
+    log.warning("%s HTTP %s: %s", model, r.status_code, r.text[:300].replace("\n", " "))  # error bodies hold no key
+    if r.status_code in (401, 403) or "API_KEY_INVALID" in r.text or "invalid_api_key" in r.text:
+        return "fatal", "The AI key was refused. Check the AI key in the project settings."
+    if r.status_code == 404 or (r.status_code == 400 and "model" in r.text.lower()):
+        return "skip", f"model {model} is not available"
+    if r.status_code == 429:
+        return "skip", "the free AI quota is used up for the moment; wait a minute and try again"
+    if r.status_code >= 500:
+        return "skip", "the free AI models are overloaded right now; try again in a moment"
+    return "skip", "the AI could not answer that request"
+
+
+def _gemini_once(client, key, model, system, prompt, schema, timeout) -> tuple[str, object]:
+    body = {"systemInstruction": {"parts": [{"text": system}]},
+            "contents": [{"role": "user", "parts": [{"text": prompt}]}],
+            "generationConfig": {"temperature": 0.2, "maxOutputTokens": 2048,
+                                 "responseMimeType": "application/json", "responseSchema": schema}}
+    try:
+        r = client.post(f"{GEMINI_BASE}/models/{model}:generateContent", json=body, headers={"x-goog-api-key": key},
+                        timeout=httpx.Timeout(timeout, connect=5.0))
+    except httpx.TimeoutException:
+        log.warning("%s timed out", model)
+        return "skip", "the free AI models took too long to answer"
+    except httpx.HTTPError as exc:
+        log.warning("%s network error: %s", model, type(exc).__name__)
+        return "skip", "the AI service could not be reached"
+    bad = _status(model, r)
+    if bad:
+        return bad
+    try:
+        cands = r.json().get("candidates") or []
+        parts = ((cands[0].get("content") or {}).get("parts") or []) if cands else []
+    except (ValueError, AttributeError):
+        parts = []
+    return _parse(model, "".join(p.get("text", "") for p in parts if not p.get("thought")))
+
+
+def _groq_once(client, key, model, system, prompt, schema, timeout) -> tuple[str, object]:
+    body = {"model": model, "temperature": 0.2, "response_format": {"type": "json_object"},
+            "messages": [{"role": "system", "content": f"{system}\nReply only with JSON matching this schema: {json.dumps(schema)}"},
+                         {"role": "user", "content": prompt}]}
+    try:
+        r = client.post(GROQ_URL, json=body, headers={"Authorization": f"Bearer {key}"},
+                        timeout=httpx.Timeout(timeout, connect=5.0))
+    except httpx.TimeoutException:
+        return "skip", "the AI took too long to answer"
+    except httpx.HTTPError:
+        return "skip", "the AI service could not be reached"
+    bad = _status(f"groq/{model}", r)
+    if bad:
+        return bad
+    try:
+        text = r.json()["choices"][0]["message"]["content"]
+    except (ValueError, KeyError, IndexError, TypeError):
+        text = ""
+    return _parse(f"groq/{model}", text)
+
+
+def generate_json(client: httpx.Client, system: str, prompt: str, schema: dict) -> dict:
+    """Ask every available model at once and keep the first good answer. On the free tiers
+    some models are often overloaded while another answers in seconds. A warm server asks
+    the model that answered last time first, on its own."""
     global _working_model
-    body = {
-        "systemInstruction": {"parts": [{"text": system}]},
-        "contents": [{"role": "user", "parts": [{"text": prompt}]}],
-        "generationConfig": {"temperature": 0.2, "maxOutputTokens": 2048,
-                             "responseMimeType": "application/json", "responseSchema": schema},
-    }
+    k = keys()
+    if not k:
+        raise AIUnavailable("AI is not set up on this server (no AI key).")
+    attempts: list[tuple[str, object]] = []  # (label, callable(timeout))
+    if "gemini" in k:
+        for m in _gemini_models(client, k["gemini"]):
+            attempts.append((f"Google Gemini ({m})",
+                             lambda t, m=m: _gemini_once(client, k["gemini"], m, system, prompt, schema, t)))
+    if "groq" in k:
+        gm = _env("GROQ_MODEL") or GROQ_DEFAULT_MODEL
+        attempts.append((f"Groq ({gm})", lambda t, gm=gm: _groq_once(client, k["groq"], gm, system, prompt, schema, t)))
     started, last = time.monotonic(), "the AI service did not answer"
-    models = _gemini_candidates(client, key)
-    warm = _working_model if _working_model in models else None
-    batches = ([warm], [m for m in models if m != warm]) if warm else (models,)
+    warm = next((a for a in attempts if a[0] == _working_model), None)
+    batches = ([warm], [a for a in attempts if a is not warm]) if warm else (attempts,)
     for n, batch in enumerate(batches):
         left = DEADLINE - (time.monotonic() - started)
         if not batch or left < 5:
             break
+        wait = min(8.0 if warm and n == 0 else 22.0, left)
         pool = ThreadPoolExecutor(max_workers=len(batch))
-        wait = min(8.0 if warm and n == 0 else 16.0, left)
-        futures = {pool.submit(_gemini_once, client, key, m, body, wait): m for m in batch}
+        futures = {pool.submit(fn, wait): label for label, fn in batch}  # type: ignore[operator]
         try:
             for fut in as_completed(futures, timeout=wait + 1):
                 status, value = fut.result()
                 if status == "ok":
                     _working_model = futures[fut]
                     return value  # type: ignore[return-value]
-                if status == "fatal":
+                if status == "fatal" and len(batch) == 1:
                     raise AIUnavailable(str(value))
                 last = str(value)
         except FuturesTimeout:
-            last = "it took too long to answer"
+            last = "the free AI models took too long to answer"
         finally:
             pool.shutdown(wait=False, cancel_futures=True)
     raise AIUnavailable(f"The AI could not answer: {last}. Nothing was changed.")
-
-
-def _groq(client: httpx.Client, key: str, system: str, prompt: str, schema: dict) -> dict:
-    shape = json.dumps(schema)
-    body = {"model": _env("LLM_MODEL") or GROQ_DEFAULT_MODEL, "temperature": 0.2, "response_format": {"type": "json_object"},
-            "messages": [{"role": "system", "content": f"{system}\nReply only with JSON matching this schema: {shape}"},
-                         {"role": "user", "content": prompt}]}
-    try:
-        r = client.post(GROQ_URL, json=body, headers={"Authorization": f"Bearer {key}"}, timeout=TIMEOUT)
-    except httpx.HTTPError:
-        raise AIUnavailable("The AI service could not be reached. Try again.")
-    if r.status_code == 429:
-        raise AIUnavailable("The free AI quota is busy right now. Wait a minute and try again.")
-    if r.status_code != 200:
-        raise AIUnavailable("The AI could not answer that request.")
-    try:
-        return json.loads(r.json()["choices"][0]["message"]["content"])
-    except (ValueError, KeyError, IndexError):
-        raise AIUnavailable("The AI's answer was not in the expected form, so it was discarded.")
-
-
-def generate_json(client: httpx.Client, system: str, prompt: str, schema: dict) -> dict:
-    prov, key = provider()
-    if not prov:
-        raise AIUnavailable("AI is not set up on this server (no LLM_API_KEY).")
-    return _gemini(client, key, system, prompt, schema) if prov == "gemini" else _groq(client, key, system, prompt, schema)
 
 
 # ------------------------------------------------------------------ plain-code guards

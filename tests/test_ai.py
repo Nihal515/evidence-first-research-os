@@ -173,5 +173,51 @@ def test_without_a_key_ai_is_refused(api, monkeypatch):
     pid, _ = project_with_paper(api, monkeypatch)
     monkeypatch.delenv("LLM_API_KEY")
     monkeypatch.delenv("GEMINI_API_KEY", raising=False)
+    monkeypatch.delenv("GROQ_API_KEY", raising=False)
     r = api.post(f"/api/projects/{pid}/ai/search-terms", json={})
     assert r.status_code == 503 and api.get("/api/ai").json()["configured"] is False
+
+
+def test_first_good_model_wins_and_busy_models_are_skipped(monkeypatch):
+    """Free-tier models are often overloaded (503) or out of quota (429): the answer
+    comes from whichever model answers, and a backup Groq key joins the race."""
+    import json as _json
+    import httpx
+
+    def handler(req):
+        u = str(req.url)
+        if u.endswith("/models?pageSize=200"):
+            names = ["gemini-3.8-flash", "gemini-3.7-flash", "gemini-3-flash-preview", "gemini-omni-1.2-flash", "gemini-2.5-flash"]
+            return httpx.Response(200, json={"models": [{"name": f"models/{n}", "supportedGenerationMethods": ["generateContent"]} for n in names]})
+        if "3.8" in u:
+            return httpx.Response(503, json={"error": {"message": "high demand"}})
+        if "3.7" in u:
+            return httpx.Response(429, json={"error": {"message": "quota"}})
+        if "3-flash-preview" in u:
+            return httpx.Response(200, json={"candidates": [{"content": {"parts": [{"text": _json.dumps({"ok": 1})}]}}]})
+        raise AssertionError(f"retired or quota-less model was asked: {u}")
+    monkeypatch.setenv("LLM_PROVIDER", "gemini")
+    monkeypatch.setenv("LLM_API_KEY", "x")
+    monkeypatch.delenv("GROQ_API_KEY", raising=False)
+    monkeypatch.setattr(ai, "_working_model", None)
+    monkeypatch.setattr(ai, "_model_list", (0.0, []))
+    with httpx.Client(transport=httpx.MockTransport(handler)) as c:
+        assert ai.generate_json(c, "s", "p", {}) == {"ok": 1}
+    assert ai._working_model == "Google Gemini (gemini-3-flash-preview)"
+
+
+def test_all_models_busy_is_reported_not_guessed(monkeypatch):
+    import httpx
+
+    def handler(req):
+        if str(req.url).endswith("/models?pageSize=200"):
+            return httpx.Response(200, json={"models": [{"name": "models/gemini-3.8-flash", "supportedGenerationMethods": ["generateContent"]}]})
+        return httpx.Response(503, json={"error": {"message": "high demand"}})
+    monkeypatch.setenv("LLM_PROVIDER", "gemini")
+    monkeypatch.setenv("LLM_API_KEY", "x")
+    monkeypatch.delenv("GROQ_API_KEY", raising=False)
+    monkeypatch.setattr(ai, "_working_model", None)
+    monkeypatch.setattr(ai, "_model_list", (0.0, []))
+    with httpx.Client(transport=httpx.MockTransport(handler)) as c:
+        with pytest.raises(ai.AIUnavailable, match="overloaded"):
+            ai.generate_json(c, "s", "p", {})
