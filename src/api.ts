@@ -1,5 +1,6 @@
 import { getToken } from "./auth";
 import type {
+  AnalyseResult,
   AiClaimCheck,
   AiSearchTerms,
   AiStatus,
@@ -112,6 +113,12 @@ export const api = {
     request<Project>(`/api/projects/${id}`, { method: "PUT", body: JSON.stringify({ title, question }) }),
   search: (id: string, q: string) => request<SearchResponse>(`/api/projects/${id}/search?q=${encodeURIComponent(q)}`),
   check: (id: string, input: CheckInput) => request<CheckResult>(`/api/projects/${id}/check`, json(input)),
+  /** The Checker agent: the same live check, plus retraction and correction notices. */
+  checkFull: (id: string, input: CheckInput) =>
+    request<CheckResult & { retraction?: Retraction | null }>(`/api/projects/${id}/check?retraction=true`, json(input)),
+  /** The Analyst agent (plain code): relevance ranking and the abstract's sentences sorted. */
+  analyse: (id: string, body: { question: string; keywords: string; items: { doi: string; title: string; year: number | null }[]; claims: string[] }) =>
+    request<AnalyseResult>(`/api/projects/${id}/analyse`, json(body)),
   /** Check without a project: nothing is saved. */
   publicCheck: (input: CheckInput) => request<CheckResult & { retraction?: Retraction | null }>("/api/check", json(input)),
   lab: () => request<LabCorpus>("/api/lab"),

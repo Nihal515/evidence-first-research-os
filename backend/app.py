@@ -13,6 +13,7 @@ from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 
 from . import ai
+from . import analyst
 from . import auth
 from . import db
 from . import keycheck
@@ -28,7 +29,8 @@ app = FastAPI(title="Paper Trail API", version="1.0.0-stage1")
 
 ID = r"^[0-9a-f]{32}$"
 CLIENT_EVENTS = {"EXPORT_APA_COPIED", "EXPORT_APA_DOWNLOADED", "EXPORT_BIBTEX_DOWNLOADED", "EXPORT_RIS_DOWNLOADED",
-                 "STATEMENT_COPIED", "STATEMENT_DOWNLOADED", "MANUSCRIPT_SCANNED"}
+                 "STATEMENT_COPIED", "STATEMENT_DOWNLOADED", "MANUSCRIPT_SCANNED",
+                 "RESEARCH_ASKED", "SEARCH_TERMS_APPROVED", "SOURCES_CHOSEN", "REVIEW_COMPLETED"}
 
 
 app.middleware("http")(auth.identity_middleware)
@@ -276,13 +278,15 @@ def lab_run(case_id: str = Query(min_length=3, max_length=120)):
 
 # ------------------------------------------------------------------ live reference check (nothing is saved)
 @app.post("/api/projects/{pid}/check")
-def check_reference(body: CheckIn, pid: str = Path(pattern=ID)):
+def check_reference(body: CheckIn, pid: str = Path(pattern=ID), retraction: bool = Query(default=False)):
     engine = require_db()
     require_project(engine, pid)
     with providers.make_client() as client:
         result = run_check(client, body)
-    out = result.to_dict()
-    rec = result.record
+        out = result.to_dict()
+        rec = result.record
+        if retraction:  # the Checker agent also looks for retraction and correction notices
+            out["retraction"] = retraction_status(client, rec.doi) if result.label == VERIFIED and rec and rec.doi else None
     out["in_list"] = bool(rec and rec.doi and db.find_reference_by_doi(engine, pid, rec.doi))
     db.log(engine, pid, "system", "REFERENCE_CHECKED",
            {"input": _input_summary(body), "label": result.label, "sources": result.sources_checked,
@@ -720,6 +724,7 @@ def summary(pid: str = Path(pattern=ID)):
         "approvals": sum(1 for e in events if e["event"] == "REFERENCE_APPROVED"),
         "exports": sum(1 for e in events if e["event"].startswith("EXPORT_")),
         "manuscripts": sum(1 for e in events if e["event"] == "MANUSCRIPT_SCANNED"),
+        "asks": sum(1 for e in events if e["event"] == "RESEARCH_ASKED"),
         "ai_runs": sum(1 for e in events if e["actor"] == "ai"),
         "ai_features": {"search_terms": sum(1 for e in events if e["event"] == "AI_SEARCH_TERMS_SUGGESTED"),
                         "readings": sum(1 for e in events if e["event"] == "AI_ABSTRACT_READ"),
@@ -873,3 +878,32 @@ def ai_claim(body: ClaimIn, pid: str = Path(pattern=ID), rid: str = Path(pattern
                                                    "quote_ok": result["quote_ok"]})
     return {**result, "label": "ai_suggestion", "agent": "Challenger", "model": model, "claim": body.claim.strip(),
             "reference_id": rid, "source": "abstract (OpenAlex)", "generated_at": now_iso()}
+
+
+# ------------------------------------------------------------------ the Analyst (plain code)
+class AnalyseItem(BaseModel):
+    doi: str = Field(min_length=6, max_length=300)
+    title: str = Field(default="", max_length=600)
+    year: Optional[int] = None
+
+
+class AnalyseIn(BaseModel):
+    question: str = Field(min_length=4, max_length=1500)
+    keywords: str = Field(default="", max_length=300)
+    items: list[AnalyseItem] = Field(min_length=1, max_length=30)
+    claims: list[str] = Field(default_factory=list, max_length=5)
+
+
+@app.post("/api/projects/{pid}/analyse")
+def analyse_sources(body: AnalyseIn, pid: str = Path(pattern=ID)):
+    """Rank candidate sources by relevance to the question and sort each abstract's own
+    sentences into aim, method, findings and limits. Plain code (TF-IDF), no AI."""
+    engine = require_db()
+    require_project(engine, pid)
+    items = [{"doi": normalize_doi(i.doi) or i.doi.lower(), "title": i.title, "year": i.year} for i in body.items]
+    claims = [c.strip()[:600] for c in body.claims if c.strip()][:5]
+    with providers.make_client() as client:
+        out = analyst.analyse(client, body.question.strip(), body.keywords.strip(), items, claims)
+    db.log(engine, pid, "system", "ANALYST_RAN", {"sources": len(items), "abstracts": out["abstracts_found"],
+                                                  "claims": len(claims)})
+    return out

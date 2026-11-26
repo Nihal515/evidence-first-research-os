@@ -85,7 +85,7 @@ async function run(mobile) {
 
   // AI level enforced: set to 1, Reader and Challenger lock
   await page.getByRole('button', { name: mobile ? 'Back to library' : 'Close details' }).click();
-  if (mobile) await page.locator('.tabs-bottom').getByRole('button', { name: 'Project' }).click();
+  if (mobile) { await page.locator('.tabs-bottom').getByRole('button', { name: 'More' }).click(); await page.getByRole('menuitem', { name: 'Project and AI level' }).click(); }
   else await page.locator('.rail').getByRole('button', { name: 'Project' }).click();
   await page.getByRole('radio', { name: /1\s*Find and check/ }).click();
   await page.getByRole('radio', { name: /1\s*Find and check/, checked: true }).waitFor();

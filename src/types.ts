@@ -137,6 +137,7 @@ export interface Summary {
   exports: number;
   ai_runs: number;
   manuscripts?: number;
+  asks?: number;
   ai_features?: { search_terms: number; readings: number; claim_checks: number };
   ai_models?: string[];
   ai_level?: number;
@@ -225,4 +226,28 @@ export interface AiStatus {
   default_level: number;
   levels: { level: number; name: string }[];
   agents: { id: string; name: string; min_level: number }[];
+}
+
+// ------------------------------------------------------------------ the Analyst (plain code)
+export interface AnalysedSource {
+  doi: string;
+  title: string;
+  year: number | null;
+  cited_by: number | null;
+  type: string;
+  venue: string;
+  open_access: boolean;
+  has_abstract: boolean;
+  design: string | null;
+  sections: { aim: string[]; method: string[]; findings: string[]; limits: string[] };
+  abstract_words: number;
+  relevance: number;
+  relevance_pct: number;
+}
+
+export interface AnalyseResult {
+  method: string;
+  abstracts_found: number;
+  results: AnalysedSource[];
+  claims: { claim: string; best: { doi: string; score: number }[] }[];
 }

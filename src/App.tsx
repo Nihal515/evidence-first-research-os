@@ -1,10 +1,11 @@
-import { BookOpenCheck, CircleUser, FileUp, FlaskConical, FolderCog, Library, LogIn, LogOut, Moon, MoreHorizontal, PlayCircle, Quote, ScrollText, ShieldCheck, Sun, X } from "lucide-react";
+import { BookOpenCheck, CircleUser, FileUp, FlaskConical, FolderCog, Library, LogIn, LogOut, Moon, MoreHorizontal, PlayCircle, Quote, ScrollText, ShieldCheck, Sparkles, Sun, X } from "lucide-react";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { api, ApiError, type Me } from "./api";
 import { onAuthChange, restoreSession, signOut } from "./auth";
 import { AddDialog } from "./components/AddDialog";
 import { DetailPanel } from "./components/DetailPanel";
 import { AiDial } from "./components/AiAgents";
+import { AskPage } from "./components/AskPage";
 import { DuplicatesView } from "./components/DuplicatesView";
 import { GuidePage, RulesPage } from "./components/InfoPages";
 import { LabPage } from "./components/LabPage";
@@ -23,7 +24,7 @@ import { runExport, type ExportFormat } from "./lib/exportActions";
 import { refsForView, viewCounts, viewTitle, type View } from "./lib/library";
 import type { BulkAction, Collection, Project, Reference } from "./types";
 
-type Page = "library" | "paper" | "list" | "statement" | "project" | InfoPage;
+type Page = "ask" | "library" | "paper" | "list" | "statement" | "project" | InfoPage;
 type InfoPage = "guide" | "lab" | "rules";
 const INFO: { id: InfoPage; label: string; path: string; icon: typeof Library }[] = [
   { id: "guide", label: "How it works", path: "/guide", icon: BookOpenCheck },
@@ -31,9 +32,10 @@ const INFO: { id: InfoPage; label: string; path: string; icon: typeof Library }[
   { id: "rules", label: "House rules", path: "/rules", icon: ScrollText },
 ];
 const isInfo = (p: Page): p is InfoPage => p === "guide" || p === "lab" || p === "rules";
-const ROUTE_PAGE: Record<string, Page> = { "/paper": "paper", "/projects": "project", "/guide": "guide", "/lab": "lab", "/rules": "rules" };
+const ROUTE_PAGE: Record<string, Page> = { "/ask": "ask", "/paper": "paper", "/projects": "project", "/guide": "guide", "/lab": "lab", "/rules": "rules" };
 const THEME_KEY = "pt.theme";
 const PAGES: { id: Page; label: string; short: string; icon: typeof Library }[] = [
+  { id: "ask", label: "Ask: research assistant", short: "Ask", icon: Sparkles },
   { id: "library", label: "Library", short: "Library", icon: Library },
   { id: "paper", label: "Your paper: upload and check", short: "Paper", icon: FileUp },
   { id: "list", label: "Reference list (APA 7)", short: "APA list", icon: Quote },
@@ -97,14 +99,14 @@ export default function App({ route = "/home" }: { route?: string }) {
   const setPage = useCallback((p: Page) => {
     setPageState(p);
     setMoreOpen(false);
-    const path = isInfo(p) ? INFO.find((x) => x.id === p)!.path : p === "project" ? "/projects" : p === "paper" ? "/paper" : "/home";
+    const path = isInfo(p) ? INFO.find((x) => x.id === p)!.path : p === "project" ? "/projects" : p === "paper" ? "/paper" : p === "ask" ? "/ask" : "/home";
     if (window.location.pathname !== path) go(path);
   }, []);
 
   // follow the address bar (links, Back and Forward)
   useEffect(() => {
     if (ROUTE_PAGE[route]) setPageState(ROUTE_PAGE[route]);
-    else setPageState((cur) => (isInfo(cur) || cur === "project" || cur === "paper" ? "library" : cur));
+    else setPageState((cur) => (isInfo(cur) || cur === "project" || cur === "paper" || cur === "ask" ? "library" : cur));
     if (route === "/check") {
       const text = storage(() => sessionStorage.getItem(HANDOFF) || "", "");
       storage(() => sessionStorage.removeItem(HANDOFF), undefined);
@@ -368,6 +370,11 @@ export default function App({ route = "/home" }: { route?: string }) {
 
   const moreItems = (
     <>
+      {compact && (
+        <button className={`menu-item${page === "project" ? " menu-item-on" : ""}`} role="menuitem" onClick={() => setPage("project")}>
+          <FolderCog size={16} aria-hidden="true" /> Project and AI level
+        </button>
+      )}
       {INFO.map(({ id, label, icon: Icon }) => (
         <button key={id} className={`menu-item${page === id ? " menu-item-on" : ""}`} role="menuitem" onClick={() => setPage(id)}>
           <Icon size={16} aria-hidden="true" /> {label}
@@ -558,6 +565,10 @@ export default function App({ route = "/home" }: { route?: string }) {
 
         {infoContent}
         {page === "library" && libraryContent}
+        {page === "ask" && (
+          <AskPage project={project} library={refs} compact={compact} onAdded={() => reload(project.id)}
+            onGo={(p) => setPage(p)} />
+        )}
         {page === "paper" && (
           <PaperPanel projectId={project.id} aiLevel={project.ai_level} library={refs} value={paper} onChange={setPaper}
             onAdded={() => reload(project.id)} />
@@ -638,7 +649,7 @@ export default function App({ route = "/home" }: { route?: string }) {
 
       {compact && (
         <nav className="tabs-bottom" aria-label="Sections">
-          {PAGES.map(({ id, short, icon: Icon }) => (
+          {PAGES.filter((x) => x.id !== "project").map(({ id, short, icon: Icon }) => (
             <button key={id} className={page === id ? "btab btab-on" : "btab"} onClick={() => setPage(id)}
               aria-current={page === id ? "page" : undefined}>
               <Icon size={20} aria-hidden="true" />
@@ -646,7 +657,7 @@ export default function App({ route = "/home" }: { route?: string }) {
               {id === "library" && counts.all > 0 && <span className="btab-count">{counts.all}</span>}
             </button>
           ))}
-          <button className={isInfo(page) || moreOpen ? "btab btab-on" : "btab"} onClick={() => setMoreOpen(!moreOpen)}
+          <button className={isInfo(page) || moreOpen || page === "project" ? "btab btab-on" : "btab"} onClick={() => setMoreOpen(!moreOpen)}
             aria-haspopup="menu" aria-expanded={moreOpen}>
             <MoreHorizontal size={20} aria-hidden="true" />
             <span>More</span>
