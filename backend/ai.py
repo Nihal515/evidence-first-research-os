@@ -33,7 +33,7 @@ AGENT_NAME = {"planner": "Planner", "reader": "Reader", "challenger": "Challenge
 DEFAULT_LEVEL = 3
 
 GEMINI_BASE = "https://generativelanguage.googleapis.com/v1beta"
-GEMINI_DEFAULT_MODEL = "gemini-2.5-flash"
+GEMINI_DEFAULT_MODEL = "gemini-flash-latest"  # used only if the model list cannot be read
 GROQ_URL = "https://api.groq.com/openai/v1/chat/completions"
 GROQ_DEFAULT_MODEL = "llama-3.3-70b-versatile"
 TIMEOUT = httpx.Timeout(22.0, connect=6.0)  # the whole function has 30 s
@@ -70,14 +70,14 @@ def model_label() -> str:
     if prov == "groq":
         return f"Groq {_env('LLM_MODEL') or GROQ_DEFAULT_MODEL}"
     if prov == "gemini":
-        return f"Google Gemini ({_working_model or _env('LLM_MODEL') or GEMINI_DEFAULT_MODEL})"
+        return f"Google Gemini ({_working_model or _env('LLM_MODEL') or 'Flash'})"
     return "none"
 
 
 # ------------------------------------------------------------------ calling the model
 def _gemini_candidates(client: httpx.Client, key: str) -> list[str]:
     """The configured model first, then the newest available Flash models."""
-    first = [m for m in (_working_model, _env("LLM_MODEL"), GEMINI_DEFAULT_MODEL) if m]
+    first = [m for m in (_working_model, _env("LLM_MODEL")) if m]
     try:
         r = client.get(f"{GEMINI_BASE}/models", params={"pageSize": 200}, headers={"x-goog-api-key": key}, timeout=8.0)
         names = [m.get("name", "").removeprefix("models/") for m in (r.json().get("models") or [])
@@ -92,7 +92,7 @@ def _gemini_candidates(client: httpx.Client, key: str) -> list[str]:
         return ("lite" not in n, nums[0], "preview" not in n, "latest" in n)  # full Flash first, Lite last
     flash.sort(key=version, reverse=True)
     out: list[str] = []
-    for n in first + flash:
+    for n in first + (flash or [GEMINI_DEFAULT_MODEL]):
         if n not in out:
             out.append(n)
     return out[:6]
@@ -108,16 +108,17 @@ def _gemini(client: httpx.Client, key: str, system: str, prompt: str, schema: di
     }
     last = "the AI service did not answer"
     started = time.monotonic()
-    for model in _gemini_candidates(client, key):
+    models = _gemini_candidates(client, key)
+    for i, model in enumerate(models):
         left = DEADLINE - (time.monotonic() - started)
         if left < 4:
             break
         payload = json.loads(json.dumps(body))
-        if "2.5-flash" in model:  # answer straight away: these tasks need no long thinking
-            payload["generationConfig"]["thinkingConfig"] = {"thinkingBudget": 0}
         try:
             r = client.post(f"{GEMINI_BASE}/models/{model}:generateContent", json=payload,
-                            headers={"x-goog-api-key": key}, timeout=httpx.Timeout(min(15.0, left), connect=5.0))
+                            headers={"x-goog-api-key": key},
+                            # a busy model gets 9 s, so the next one still has time; the last gets the rest
+                            timeout=httpx.Timeout(min(9.0 if i < len(models) - 1 else 20.0, left), connect=5.0))
         except httpx.TimeoutException:
             log.warning("gemini %s timed out", model)
             last = "it took too long to answer"
