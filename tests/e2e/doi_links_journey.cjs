@@ -27,8 +27,8 @@ const res = []; const ok = (n, c, x = '') => { const l = `${c ? 'PASS' : 'FAIL'}
     }
     // click one: the new tab lands on doi.org / the publisher
     const [tab] = await Promise.all([ctx.waitForEvent('page'), page.locator('a[href="https://doi.org/10.1126/science.adh2586"][aria-label^="Open the article page"]').click()]);
-    await tab.waitForLoadState('domcontentloaded').catch(() => null);
-    const u = tab.url();
+    await tab.waitForURL(/doi\.org|science\.org/, { timeout: 20000, waitUntil: 'commit' }).catch(() => null);
+    const u = tab.url() || '(blank)';
     ok(`${tag}: clicking it opens the DOI page`, /doi\.org\/10\.1126|science\.org\/doi\/10\.1126/.test(u), u.slice(0, 90));
     await tab.close();
     // free copies: arXiv PDF stays a separate link; Wiley publisher copy collapses into the article page
